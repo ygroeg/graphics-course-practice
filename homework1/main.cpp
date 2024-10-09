@@ -33,8 +33,8 @@ void glew_fail(std::string_view message, GLenum error)
 const char vertex_shader_source[] =
     R"(#version 330 core
 
+    uniform mat4 transform;
     uniform mat4 view;
-    uniform mat4 projection;
     uniform int dimension;
 
     layout (location = 0) in vec2 in_position;
@@ -43,9 +43,9 @@ const char vertex_shader_source[] =
 
     void main()
     {
-        gl_Position = projection * view * vec4(in_position, 0.0, 1.0);
+        gl_Position =  view * transform * vec4(in_position, 0.0, 1.0);
 
-        if (in_position.x < dimension / 3.f)
+        if (in_position.x < dimension / 2.f)
             color = vec4(1., 1., 1., 1.);
         else
             color = vec4(1., 0., 0.,1.);
@@ -159,7 +159,7 @@ try
   glUseProgram(program);
 
   auto vertices = std::vector<vertex>{};
-  auto indices = std::vector<u_int32_t>{};
+  auto indices = std::vector<uint32_t>{};
   // make grid
   const auto dimension = 1024;
   const auto dimension_location = glGetUniformLocation(program, "dimension");
@@ -201,11 +201,18 @@ try
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vertex),
                         (void *)offsetof(vertex, position));
-
-  float view[16] = {1, 0, 0, -500, 0, 1, 0, -500, 0, 0, 1, -5000.f, 0, 0, 0, 1};
+  auto scale = 0.001f;
+  float view[16] = {1 * scale, 0, 0, -0.5, 0, 1 * scale, 0, -0.5,
+                    0,         0, 1, -1,   0, 0,         0, 1};
   const auto view_location = glGetUniformLocation(program, "view");
 
+  float transform[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  const auto transform_location = glGetUniformLocation(program, "transform");
+  float speed_x = 0.0;
+  float speed_y = 0.0;
   bool running = true;
+  std::unordered_map<SDL_Scancode, bool> key_down;
+  auto last_frame_start = std::chrono::high_resolution_clock::now();
   while (running)
   {
     for (SDL_Event event; SDL_PollEvent(&event);)
@@ -225,43 +232,69 @@ try
         }
         break;
       case SDL_KEYDOWN:
+        key_down[event.key.keysym.scancode] = true;
         break;
       case SDL_KEYUP:
+        key_down[event.key.keysym.scancode] = false;
         break;
       }
+
+    if (key_down[SDL_SCANCODE_LEFT])
+      speed_x = -100.f;
+    else if (key_down[SDL_SCANCODE_RIGHT])
+      speed_x = 100.0;
+    else
+      speed_x = .0f;
+
+    if (key_down[SDL_SCANCODE_UP])
+      speed_y = 100.0;
+    else if (key_down[SDL_SCANCODE_DOWN])
+      speed_y = -100.0;
+    else
+      speed_y = .0f;
 
     if (!running)
       break;
 
     glClear(GL_COLOR_BUFFER_BIT);
 
+    auto now = std::chrono::high_resolution_clock::now();
+    float dt = std::chrono::duration_cast<std::chrono::duration<float>>(
+                   now - last_frame_start)
+                   .count();
+    // dt = 0.016f;
+    last_frame_start = now;
+
+    transform[3] += speed_x * dt;
+    transform[7] += speed_y * dt;
     auto near = 0.1f;
-    auto far = 10000.f;
+    auto far = 50000.f;
     auto fov = 120.f;
     auto right = near * tan(fov / 2);
     auto top = height * right / width;
-    float projection[16] = {near / right,
+    float projection[16] = {1 / right,
                             0.f,
                             0.f,
                             0.f,
                             0.f,
-                            near / top,
+                            1 / top,
                             0.f,
                             0.f,
                             0.f,
                             0.f,
+                            -2.f / (far - near),
                             -(far + near) / (far - near),
-                            -2.f * far * near / (far - near),
                             0.f,
                             0.f,
-                            -1.f,
-                            0.f};
+                            0.f,
+                            1.f};
     const auto projection_location =
         glGetUniformLocation(program, "projection");
 
     glUniform1i(dimension_location, dimension);
     glUniformMatrix4fv(view_location, 1, GL_TRUE, view);
     glUniformMatrix4fv(projection_location, 1, GL_TRUE, projection);
+    glUniformMatrix4fv(transform_location, 1, GL_TRUE, transform);
 
     glBindVertexArray(vao);
     glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, (void *)0);
