@@ -156,7 +156,7 @@ void main()
 
     float delta = 0.125;
     factor = factor > delta ? (factor - delta) / (1 - delta) : 0.0;
-    color += sun_color * max(0.0, dot(normal, sun_direction)) * factor;
+    color += sun_color * max(0.0, dot(normal, phong(sun_direction))) * factor;
 
     vec3 to_point = normalize(point_light_position - position);
     float point_light_distance = distance(position, point_light_position);
