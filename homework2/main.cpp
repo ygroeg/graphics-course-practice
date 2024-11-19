@@ -162,7 +162,7 @@ void main()
     float point_light_distance = distance(position, point_light_position);
     float attenuation = point_light_attenuation.x + point_light_attenuation.y * point_light_distance + point_light_attenuation.z * point_light_distance * point_light_distance;
     vec3 point_light = phong(to_point) * point_light_color / attenuation;
-    // color += point_light;
+    color += point_light;
 
     out_color = vec4(color, 1.0);
 }
