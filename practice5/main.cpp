@@ -371,7 +371,7 @@ try
     glUseProgram(program);
     glUniformMatrix4fv(viewmodel_location, 1, GL_TRUE, viewmodel);
     glUniformMatrix4fv(projection_location, 1, GL_TRUE, projection);
-    glUniform1i(sampler_location, 1);
+    glUniform1i(sampler_location, 0);
     glUniform1f(time_location, time);
 
     glBindVertexArray(vao);

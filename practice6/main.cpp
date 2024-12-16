@@ -476,6 +476,8 @@ try
 
         projection = glm::perspective(glm::pi<float>() / 2.f,
                                       (1.f * width) / height, near, far);
+        projection = glm::perspective(glm::pi<float>() / 2.f,
+                                      (1.f * width) / height, near, far);
       }
       break;
       default:

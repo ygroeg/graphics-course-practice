@@ -87,7 +87,7 @@ uniform vec3 sun_direction;
 uniform vec3 sun_color;
 uniform sampler2D albedo_texture;
 uniform mat4 model;
-uniform mat4 shadow_projection;
+uniform mat4 shadow_projection_sun;
 uniform sampler2D shadow_map;
 uniform bool alpha;
 uniform sampler2D alpha_texture;
@@ -96,6 +96,8 @@ uniform float glossiness;
 uniform vec3 point_light_position;
 uniform vec3 point_light_attenuation;
 uniform vec3 point_light_color;
+uniform mat4 shadow_projection_point[6];
+uniform samplerCube depthCubemap;
 
 in vec3 position;
 in vec3 normal;
@@ -119,11 +121,29 @@ vec3 phong(vec3 direction) {
     return diffuse(direction) + specular(direction);
 }
 
+//vec3 blur2(vec4 texcoord) {
+//    vec3 sum = vec3(0.0);
+//    vec3 sum_w = vec3(0.0);
+//    const int N = 7;
+//    float radius = 5.0;
+
+//    for (int x = -N; x <= N; ++x) {
+//        for (int y = -N; y <= N; ++y) {
+//            for (int z = -N; z <= N; ++z) {
+//                float c = exp(-float(x * x + y * y+ z * z) / (radius*radius*radius));
+//                sum += c * texture(depthCubemap, texcoord.xyz + vec3(x,y,z) / vec3(textureSize(depthCubemap, 0).xyx)).rgb;
+//                sum_w += c;
+//            }
+//        }
+//    }
+//    return sum / sum_w;
+//}
+
 vec2 blur(vec4 texcoord) {
     vec2 sum = vec2(0.0);
     vec2 sum_w = vec2(0.0);
-    const int N = 7;
-    float radius = 5.0;
+    const int N = 1;
+    float radius = 1.0;
 
     for (int x = -N; x <= N; ++x) {
         for (int y = -N; y <= N; ++y) {
@@ -135,16 +155,8 @@ vec2 blur(vec4 texcoord) {
     return sum / sum_w;
 }
 
-void main()
-{
-    if(alpha && texture(alpha_texture, texcoord).x < 0.5)
-        discard;
-
-    float ambient_light = 0.2;
-    albedo = texture(albedo_texture, texcoord).xyz;
-    vec3 color = albedo * ambient_light;
-
-    vec4 shadow_pos = shadow_projection * vec4(position, 1.0);
+float shadow_factor(mat4 projection) {
+    vec4 shadow_pos = projection * vec4(position, 1.0);
     shadow_pos /= shadow_pos.w;
     shadow_pos = shadow_pos * 0.5 + vec4(0.5);
     vec2 data = blur(shadow_pos);
@@ -153,16 +165,51 @@ void main()
     float z = shadow_pos.z - 0.03;
     float factor = (z < mu) ? 1.0
         : sigma / (sigma + (z - mu) * (z - mu));
-
     float delta = 0.125;
-    factor = factor > delta ? (factor - delta) / (1 - delta) : 0.0;
-    color += sun_color * max(0.0, dot(normal, phong(sun_direction))) * factor;
+    return factor > delta ? (factor - delta) / (1 - delta) : 0.0;
+}
 
-    vec3 to_point = normalize(point_light_position - position);
-    float point_light_distance = distance(position, point_light_position);
-    float attenuation = point_light_attenuation.x + point_light_attenuation.y * point_light_distance + point_light_attenuation.z * point_light_distance * point_light_distance;
-    vec3 point_light = phong(to_point) * point_light_color / attenuation;
-    color += point_light;
+vec3 calc_sun_with_shadows() {
+    return sun_color * max(0.0, dot(normal, phong(sun_direction))) * shadow_factor(shadow_projection_sun);
+}
+
+//float shadow_factor2(mat4 projection) {
+//    vec4 shadow_pos = projection * vec4(position, 1.0);
+//    shadow_pos /= shadow_pos.w;
+//    shadow_pos = shadow_pos * 0.5 + vec4(0.5);
+//    vec3 data = blur2(shadow_pos);
+//    float mu = data.r;
+//    float sigma = data.g - mu * mu;
+//    float z = shadow_pos.z - 0.03;
+//    float factor = (z < mu) ? 1.0
+//        : sigma / (sigma + (z - mu) * (z - mu));
+//    float delta = 0.125;
+//    return factor > delta ? (factor - delta) / (1 - delta) : 0.0;
+//}
+
+//vec3 calc_point_light_with_shadows() {
+//    vec3 to_point = normalize(point_light_position - position);
+//    float point_light_distance = distance(position, point_light_position);
+//    float attenuation = point_light_attenuation.x + point_light_attenuation.y * point_light_distance + point_light_attenuation.z * point_light_distance * point_light_distance;
+//    // vec3 point_light = phong(to_point) * point_light_color / attenuation;
+//    vec3 point_light = vec3(0.f);
+//    for (int i = 0; i < 6; i++) {
+//        point_light += point_light_color * max(0.0, dot(normal, phong(to_point))) * shadow_factor2(shadow_projection_point[i]);
+//    }
+//    return point_light;
+//    //shadow of point light
+//}
+
+void main()
+{
+    if(alpha && texture(alpha_texture, texcoord).x < 0.5)
+        discard;
+
+    float ambient_light = 0.25;
+    albedo = texture(albedo_texture, texcoord).xyz;
+    vec3 color = albedo * ambient_light;
+    color += calc_sun_with_shadows();
+    // color += calc_point_light_with_shadows();
 
     out_color = vec4(color, 1.0);
 }
@@ -216,18 +263,42 @@ void main()
 const char shadow_vertex_shader_source[] =
     R"(#version 330 core
 
-uniform mat4 shadow_projection;
+uniform mat4 shadow_projection_sun;
 uniform mat4 model;
 
 layout (location = 0) in vec3 in_position;
 
 void main()
 {
-    gl_Position = shadow_projection * model * vec4(in_position, 1.0);
+    gl_Position = shadow_projection_sun * model * vec4(in_position, 1.0);
 }
 )";
 
 const char shadow_fragment_shader_source[] =
+    R"(#version 330 core
+
+out vec4 out_vec;
+void main() {
+    float z = gl_FragCoord.z;
+    out_vec = vec4(z, z * z + 0.25 * (dFdx(z) * dFdx(z) + dFdy(z) * dFdy(z)), 0, 0);
+}
+)";
+
+const char shadow_vertex_shader_source_[] =
+    R"(#version 330 core
+
+uniform mat4 shadow_projection_point;
+uniform mat4 model;
+
+layout (location = 0) in vec3 in_position;
+
+void main()
+{
+    gl_Position = shadow_projection_point * model * vec4(in_position, 1.0);
+}
+)";
+
+const char shadow_fragment_shader_source_[] =
     R"(#version 330 core
 
 out vec4 out_vec;
@@ -430,11 +501,17 @@ try
       create_shader(GL_VERTEX_SHADER, shadow_vertex_shader_source);
   auto shadow_fragment_shader =
       create_shader(GL_FRAGMENT_SHADER, shadow_fragment_shader_source);
+  auto shadow_vertex_shader_ =
+      create_shader(GL_VERTEX_SHADER, shadow_vertex_shader_source_);
+  auto shadow_fragment_shader_ =
+      create_shader(GL_FRAGMENT_SHADER, shadow_fragment_shader_source_);
   auto program = create_program(vertex_shader, fragment_shader);
   auto rectangle_program =
       create_program(rectangle_vertex_shader, rectangle_fragment_shader);
   auto shadow_program =
       create_program(shadow_vertex_shader, shadow_fragment_shader);
+  auto shadow_program_ =
+      create_program(shadow_vertex_shader_, shadow_fragment_shader_);
 
   GLuint model_location = glGetUniformLocation(program, "model");
   GLuint view_location = glGetUniformLocation(program, "view");
@@ -444,8 +521,8 @@ try
   GLuint sun_direction_location =
       glGetUniformLocation(program, "sun_direction");
   GLuint sun_color_location = glGetUniformLocation(program, "sun_color");
-  GLuint shadow_projection_location_ =
-      glGetUniformLocation(program, "shadow_projection");
+  GLuint shadow_projection_sun_location_ =
+      glGetUniformLocation(program, "shadow_projection_sun");
   GLuint albedo_texture_location =
       glGetUniformLocation(program, "albedo_texture");
   GLuint alpha_location = glGetUniformLocation(program, "alpha");
@@ -468,13 +545,26 @@ try
   glUseProgram(rectangle_program);
   glUniform1i(rectangle_shadow_map_location, 0);
 
-  GLuint shadow_projection_location =
-      glGetUniformLocation(shadow_program, "shadow_projection");
+  GLuint shadow_projection_sun_location =
+      glGetUniformLocation(shadow_program, "shadow_projection_sun");
   GLuint shadow_model_location = glGetUniformLocation(shadow_program, "model");
+
+  GLuint shadow_projection_point_location =
+      glGetUniformLocation(shadow_program_, "shadow_projection_point");
+  GLuint shadow_projection_point_location_ =
+      glGetUniformLocation(program, "shadow_projection_point");
+  GLuint depth_cube_location = glGetUniformLocation(program, "depthCubemap");
+  GLuint shadow_model_location_ =
+      glGetUniformLocation(shadow_program_, "model");
+  glUseProgram(program);
+  glUniform1i(depth_cube_location, 1);
+  glUseProgram(rectangle_program);
 
   std::string project_root = PROJECT_ROOT;
   std::string obj_path = project_root + "/scenes/sponza/sponza.obj";
   std::string materials_dir = project_root + "/scenes/sponza/";
+  //  std::string obj_path = project_root + "/scenes/Hogwarts/Hogwarts.obj";
+  //  std::string materials_dir = project_root + "/scenes/Hogwarts/";
   tinyobj::ObjReaderConfig reader_config;
   reader_config.mtl_search_path = materials_dir;
 
@@ -575,6 +665,32 @@ try
 
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
+  GLuint depthCubemap;
+  glGenTextures(1, &depthCubemap);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
+  //  for (unsigned int i = 0; i < 6; ++i)
+  //    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT,
+  //                 shadow_map_size, shadow_map_size, 0, GL_DEPTH_COMPONENT,
+  //                 GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+  GLuint depthMapFBO;
+  glGenFramebuffers(1, &depthMapFBO);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, depthMapFBO);
+  glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthCubemap,
+                       0);
+  glDrawBuffer(GL_NONE);
+  glReadBuffer(GL_NONE);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+  if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    throw std::runtime_error("Framebuffer incomplete2");
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
   auto last_frame_start = std::chrono::high_resolution_clock::now();
 
   float time = 0.f;
@@ -612,8 +728,8 @@ try
           glUniform1i(alpha_location, false);
         }
 
-        glUniform1f(glossiness_location, materials[id].specular[0]);
-        glUniform1f(power_location, materials[id].shininess);
+        // glUniform1f(glossiness_location, materials[id].specular[0]);
+        // glUniform1f(power_location, materials[id].shininess);
       }
 
       glDrawArrays(GL_TRIANGLES, first, face.second);
@@ -624,12 +740,12 @@ try
       glActiveTexture(GL_TEXTURE0);
   };
 
-  auto camera_yaw = 0.f;
-  auto camera_pitch = 0.f;
-  auto x = 0.f;
-  auto y = 0.f;
-  auto z = 0.f;
-  glm::vec3 point_light_position{0.f};
+  auto camera_pitch = 0.1f;
+  auto camera_yaw = -0.6f;
+  auto x = 1090.f;
+  auto y = -140.f;
+  auto z = 130.f;
+  glm::vec3 point_light_position{-1350.f, 80.f, -460.f};
   bool running = true;
   while (running)
   {
@@ -671,11 +787,11 @@ try
 
     if (button_down[SDLK_r])
     {
-      x = 0;
-      y = 0;
-      z = 0;
-      camera_yaw = 0;
-      camera_pitch = 0;
+      camera_pitch = -0.2f;
+      camera_yaw = 1.8f;
+      x = 930.f;
+      y = -590.f;
+      z = 140.f;
     }
 
     if (button_down[SDLK_w])
@@ -692,58 +808,14 @@ try
       z += 10;
 
     if (button_down[SDLK_LEFT])
-      camera_yaw -= 2.f * dt;
+      camera_yaw -= .1f;
     if (button_down[SDLK_RIGHT])
-      camera_yaw += 2.f * dt;
+      camera_yaw += .1f;
     if (button_down[SDLK_UP])
-      camera_pitch -= 2.f * dt;
+      camera_pitch -= .1f;
     if (button_down[SDLK_DOWN])
-      camera_pitch += 2.f * dt;
+      camera_pitch += .1f;
 
-    float near = 1.f;
-    float far = 5000.f;
-
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glViewport(0, 0, shadow_map_size, shadow_map_size);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-
-    glm::mat4 model(1.f);
-
-    glm::vec3 sun_direction = glm::normalize(
-        glm::vec3(std::cos(time * 0.5f), 1.f, std::sin(time * 0.5f)));
-
-    glm::vec3 light_z = -sun_direction;
-    glm::vec3 light_x = glm::normalize(glm::cross(light_z, {0.f, 1.f, 0.f}));
-    glm::vec3 light_y = glm::cross(light_x, light_z);
-
-    float X = 0, Y = 0, Z = 0;
-    for (float x : {minx, maxx})
-      for (float y : {miny, maxy})
-        for (float z : {minz, maxz})
-        {
-          glm::vec3 V(x, y, z);
-          X = std::max(X, abs(glm::dot(V - C, light_x)));
-          Y = std::max(Y, abs(glm::dot(V - C, light_y)));
-          Z = std::max(Z, abs(glm::dot(V - C, light_z)));
-        }
-
-    glm::mat4 shadow_projection = glm::mat4(1.f);
-    shadow_projection[0] = {X * light_x, 0};
-    shadow_projection[1] = {Y * light_y, 0};
-    shadow_projection[2] = {Z * light_z, 0};
-    shadow_projection[3] = {C, 1};
-    shadow_projection = glm::inverse(shadow_projection);
-
-    glUseProgram(shadow_program);
-
-    glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE,
-                       reinterpret_cast<float *>(&model));
-    glUniformMatrix4fv(shadow_projection_location, 1, GL_FALSE,
-                       reinterpret_cast<float *>(&shadow_projection));
     glm::mat4 view(1.f);
     view = glm::rotate(view, camera_pitch, {1.f, 0.f, 0.f});
     view = glm::rotate(view, camera_yaw, {0.f, 1.f, 0.f});
@@ -755,7 +827,126 @@ try
     glm::vec3 camera_position =
         (glm::inverse(view) * glm::vec4(0.f, 0.f, 0.f, 1.f)).xyz();
     if (button_down[SDLK_SPACE])
+    {
       point_light_position = camera_position;
+      std::cout << camera_position.x << '\t' << camera_position.y << '\t'
+                << camera_position.z << '\t' << camera_pitch << '\t'
+                << camera_yaw << std::endl;
+    }
+
+    glm::mat4 model(1.f);
+
+    float near_plane = 1.0f;
+    float X = 0, Y = 0, Z = 0;
+    for (float x : {minx, maxx})
+      for (float y : {miny, maxy})
+        for (float z : {minz, maxz})
+        {
+          glm::vec3 V(x, y, z);
+          X = std::max(X, abs(glm::dot(V - point_light_position,
+                                       glm::vec3{1.0f, 0.0f, 0.0f})));
+          Y = std::max(Y, abs(glm::dot(V - point_light_position,
+                                       glm::vec3{0.0f, 1.0f, 0.0f})));
+          Z = std::max(Z, abs(glm::dot(V - point_light_position,
+                                       glm::vec3{0.0f, 0.0f, 1.0f})));
+        }
+    float far_plane = glm::length(glm::vec3{X, Y, Z});
+    glm::mat4 shadowProj = glm::perspective(
+        glm::radians(90.0f), (float)shadow_map_size / (float)shadow_map_size,
+        near_plane, far_plane);
+    std::vector<glm::mat4> shadowTransforms;
+    shadowTransforms.push_back(
+        shadowProj *
+        glm::lookAt(point_light_position,
+                    point_light_position + glm::vec3(1.0f, 0.0f, 0.0f),
+                    glm::vec3(0.0f, -1.0f, 0.0f)));
+    shadowTransforms.push_back(
+        shadowProj *
+        glm::lookAt(point_light_position,
+                    point_light_position + glm::vec3(-1.0f, 0.0f, 0.0f),
+                    glm::vec3(0.0f, -1.0f, 0.0f)));
+    shadowTransforms.push_back(
+        shadowProj *
+        glm::lookAt(point_light_position,
+                    point_light_position + glm::vec3(0.0f, 1.0f, 0.0f),
+                    glm::vec3(0.0f, 0.0f, 1.0f)));
+    shadowTransforms.push_back(
+        shadowProj *
+        glm::lookAt(point_light_position,
+                    point_light_position + glm::vec3(0.0f, -1.0f, 0.0f),
+                    glm::vec3(0.0f, 0.0f, -1.0f)));
+    shadowTransforms.push_back(
+        shadowProj *
+        glm::lookAt(point_light_position,
+                    point_light_position + glm::vec3(0.0f, 0.0f, 1.0f),
+                    glm::vec3(0.0f, -1.0f, 0.0f)));
+    shadowTransforms.push_back(
+        shadowProj *
+        glm::lookAt(point_light_position,
+                    point_light_position + glm::vec3(0.0f, 0.0f, -1.0f),
+                    glm::vec3(0.0f, -1.0f, 0.0f)));
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, depthMapFBO);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glViewport(0, 0, shadow_map_size, shadow_map_size);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+
+    glUseProgram(shadow_program_);
+
+    glUniformMatrix4fv(shadow_model_location_, 1, GL_FALSE,
+                       reinterpret_cast<float *>(&model));
+    for (unsigned int i = 0; i < 6; ++i)
+    {
+      glUniformMatrix4fv(shadow_projection_point_location, 1, GL_FALSE,
+                         reinterpret_cast<float *>(&shadowTransforms[i]));
+      glUniformMatrix4fv(shadow_projection_point_location_, 1, GL_FALSE,
+                         reinterpret_cast<float *>(&shadowTransforms[i]));
+    }
+    glBindVertexArray(scene_vao);
+    draw_scene(true);
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, shadow_fbo);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glViewport(0, 0, shadow_map_size, shadow_map_size);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+
+    glm::vec3 sun_direction = glm::normalize(
+        glm::vec3(std::cos(time * 0.5f), 1.f, std::sin(time * 0.5f)));
+
+    glm::vec3 light_z = -sun_direction;
+    glm::vec3 light_x = glm::normalize(glm::cross(light_z, {0.f, 1.f, 0.f}));
+    glm::vec3 light_y = glm::cross(light_x, light_z);
+
+    X = 0, Y = 0, Z = 0;
+    for (float x : {minx, maxx})
+      for (float y : {miny, maxy})
+        for (float z : {minz, maxz})
+        {
+          glm::vec3 V(x, y, z);
+          X = std::max(X, abs(glm::dot(V - C, light_x)));
+          Y = std::max(Y, abs(glm::dot(V - C, light_y)));
+          Z = std::max(Z, abs(glm::dot(V - C, light_z)));
+        }
+
+    glm::mat4 shadow_projection_sun = glm::mat4(1.f);
+    shadow_projection_sun[0] = {X * light_x, 0};
+    shadow_projection_sun[1] = {Y * light_y, 0};
+    shadow_projection_sun[2] = {Z * light_z, 0};
+    shadow_projection_sun[3] = {C, 1};
+    shadow_projection_sun = glm::inverse(shadow_projection_sun);
+
+    glUseProgram(shadow_program);
+
+    glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE,
+                       reinterpret_cast<float *>(&model));
+    glUniformMatrix4fv(shadow_projection_sun_location, 1, GL_FALSE,
+                       reinterpret_cast<float *>(&shadow_projection_sun));
 
     glBindVertexArray(scene_vao);
     draw_scene(true);
@@ -771,10 +962,13 @@ try
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
+    float near = 1.f;
+    float far = 5000.f;
     float aspect = (float)height / (float)width;
     glm::mat4 projection =
         glm::perspective(glm::pi<float>() / 3.f, 1.f / aspect, near, far);
 
+    glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
     glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
     glUseProgram(program);
 
@@ -784,10 +978,10 @@ try
                        reinterpret_cast<float *>(&view));
     glUniformMatrix4fv(projection_location, 1, GL_FALSE,
                        reinterpret_cast<float *>(&projection));
-    glUniformMatrix4fv(shadow_projection_location_, 1, GL_FALSE,
-                       reinterpret_cast<float *>(&shadow_projection));
+    glUniformMatrix4fv(shadow_projection_sun_location_, 1, GL_FALSE,
+                       reinterpret_cast<float *>(&shadow_projection_sun));
     glUniform3fv(camera_position_location, 1, (float *)(&camera_position));
-    glUniform3f(sun_color_location, 1.f, 1.f, 1.f);
+    glUniform3f(sun_color_location, 0.8f, 0.8f, 0.8f);
     glUniform3fv(sun_direction_location, 1,
                  reinterpret_cast<float *>(&sun_direction));
     glUniform3fv(point_light_position_location, 1,
@@ -799,7 +993,6 @@ try
     draw_scene(false);
 
     glUseProgram(rectangle_program);
-    // glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(rectangle_vao);
     glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
