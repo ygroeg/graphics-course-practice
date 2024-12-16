@@ -40,18 +40,15 @@
 #include "stb_image.h"
 #include "tiny_obj_loader.h"
 
-std::string to_string(std::string_view str)
-{
+std::string to_string(std::string_view str) {
   return std::string(str.begin(), str.end());
 }
 
-void sdl2_fail(std::string_view message)
-{
+void sdl2_fail(std::string_view message) {
   throw std::runtime_error(to_string(message) + SDL_GetError());
 }
 
-void glew_fail(std::string_view message, GLenum error)
-{
+void glew_fail(std::string_view message, GLenum error) {
   throw std::runtime_error(to_string(message) + reinterpret_cast<const char *>(
                                                     glewGetErrorString(error)));
 }
@@ -82,11 +79,13 @@ void main()
 
 const char fragment_shader_source[] =
     R"(#version 330 core
+#extension GL_ARB_derivative_control : require
 
 uniform vec3 camera_position;
 uniform vec3 sun_direction;
 uniform vec3 sun_color;
 uniform sampler2D albedo_texture;
+uniform sampler2D bump_texture;
 uniform mat4 model;
 uniform mat4 shadow_projection_sun;
 uniform sampler2D shadow_map;
@@ -94,11 +93,11 @@ uniform bool alpha;
 uniform sampler2D alpha_texture;
 uniform float power;
 uniform float glossiness;
-uniform vec3 point_light_position;
-uniform vec3 point_light_attenuation;
-uniform vec3 point_light_color;
+//uniform vec3 point_light_position;
+//uniform vec3 point_light_attenuation;
+//uniform vec3 point_light_color;
 uniform mat4 shadow_projection_point[6];
-uniform samplerCube depthCubemap;
+//uniform samplerCube depthCubemap;
 
 in vec3 position;
 in vec3 normal;
@@ -108,18 +107,18 @@ layout (location = 0) out vec4 out_color;
 
 vec3 albedo;
 
-vec3 diffuse(vec3 direction) {
+vec3 diffuse(vec3 normal, vec3 direction) {
     return albedo * max(0.0, dot(normal, direction));
 }
 
-vec3 specular(vec3 direction) {
+vec3 specular(vec3 normal, vec3 direction) {
     vec3 reflected_direction = 2.0 * normal * dot(normal, direction) - direction;
     vec3 view_direction = normalize(camera_position - position);
     return glossiness * albedo * pow(max(0.0, dot(reflected_direction, view_direction)), power);
 }
 
-vec3 phong(vec3 direction) {
-    return diffuse(direction) + specular(direction);
+vec3 phong(vec3 normal, vec3 direction) {
+    return diffuse(normal, direction) + specular(normal, direction);
 }
 
 //vec3 blur2(vec4 texcoord) {
@@ -170,9 +169,33 @@ float shadow_factor(mat4 projection) {
     return factor > delta ? (factor - delta) / (1 - delta) : 0.0;
 }
 
-vec3 calc_sun_with_shadows() {
-    return sun_color * max(0.0, dot(normal, phong(sun_direction))) * shadow_factor(shadow_projection_sun);
+vec3 getNormal(vec3 vnormal, vec3 vworldpos, vec2 tc, float height)
+{
+    // Bump mapping 
+    // from paper: Bump Mapping Unparametrized Surfaces on the GPU
+    vec3 vn = normalize( vnormal );
+    vec3 posDX = dFdx ( vworldpos.xyz );  // choose dFdx (#version 420) or dFdxFine (#version 450) here
+    vec3 posDY = dFdy ( vworldpos.xyz );
+    vec3 r1 = cross ( posDY, vn );
+    vec3 r2 = cross ( vn , posDX );
+    float det = dot (posDX , r1);
+    float Hll = texture( bump_texture, tc ).x;    //-- height from bump map texture, tc=texture coordinates
+    float Hlr = texture( bump_texture, tc + dFdx(tc) ).x;
+    float Hul = texture( bump_texture, tc + dFdy(tc) ).x;
+    // float dBs = ddx_fine ( height );     //-- optional explicit height
+    // float dBt = ddy_fine ( height );
+
+    // gradient of surface texture. dBs=Hlr-Hll, dBt=Hul-Hll
+    vec3 surf_grad = sign(det) * ( (Hlr - Hll) * r1 + (Hul - Hll)* r2 );    
+    float bump_amt = 0.7;       // bump_amt = adjustable bump amount
+    vec3 vbumpnorm = vn*(1.0-bump_amt) + bump_amt * normalize ( abs(det)*vn - surf_grad );  // bump normal
+    return vbumpnorm;
 }
+
+vec3 calc_sun_with_shadows() {
+    vec3 bumpedNormal = getNormal(normal, position, texcoord, 0.f);
+    return sun_color * max(0.0, dot(bumpedNormal, phong(bumpedNormal, sun_direction))) * shadow_factor(shadow_projection_sun);
+} 
 
 //float shadow_factor2(mat4 projection) {
 //    vec4 shadow_pos = projection * vec4(position, 1.0);
@@ -353,15 +376,13 @@ void main()
 // }
 //)";
 
-GLuint create_shader(GLenum type, const char *source)
-{
+GLuint create_shader(GLenum type, const char *source) {
   GLuint result = glCreateShader(type);
   glShaderSource(result, 1, &source, nullptr);
   glCompileShader(result);
   GLint status;
   glGetShaderiv(result, GL_COMPILE_STATUS, &status);
-  if (status != GL_TRUE)
-  {
+  if (status != GL_TRUE) {
     GLint info_log_length;
     glGetShaderiv(result, GL_INFO_LOG_LENGTH, &info_log_length);
     std::string info_log(info_log_length, '\0');
@@ -371,8 +392,7 @@ GLuint create_shader(GLenum type, const char *source)
   return result;
 }
 
-GLuint create_program(GLuint vertex_shader, GLuint fragment_shader)
-{
+GLuint create_program(GLuint vertex_shader, GLuint fragment_shader) {
   GLuint result = glCreateProgram();
   glAttachShader(result, vertex_shader);
   glAttachShader(result, fragment_shader);
@@ -380,8 +400,7 @@ GLuint create_program(GLuint vertex_shader, GLuint fragment_shader)
 
   GLint status;
   glGetProgramiv(result, GL_LINK_STATUS, &status);
-  if (status != GL_TRUE)
-  {
+  if (status != GL_TRUE) {
     GLint info_log_length;
     glGetProgramiv(result, GL_INFO_LOG_LENGTH, &info_log_length);
     std::string info_log(info_log_length, '\0');
@@ -392,16 +411,12 @@ GLuint create_program(GLuint vertex_shader, GLuint fragment_shader)
   return result;
 }
 
-void load_scene(const auto &shapes, const auto &attrib, obj_data &scene)
-{
-  for (size_t s = 0; s < shapes.size(); s++)
-  {
+void load_scene(const auto &shapes, const auto &attrib, obj_data &scene) {
+  for (size_t s = 0; s < shapes.size(); s++) {
     size_t index_offset = 0;
-    for (size_t f = 0; f < shapes[s].mesh.num_face_vertices.size(); f++)
-    {
+    for (size_t f = 0; f < shapes[s].mesh.num_face_vertices.size(); f++) {
       size_t fv = size_t(shapes[s].mesh.num_face_vertices[f]);
-      for (size_t v = 0; v < fv; v++)
-      {
+      for (size_t v = 0; v < fv; v++) {
         tinyobj::index_t idx = shapes[s].mesh.indices[index_offset + v];
         obj_data::vertex vertex;
         tinyobj::real_t vx = attrib.vertices[3 * size_t(idx.vertex_index) + 0];
@@ -409,16 +424,14 @@ void load_scene(const auto &shapes, const auto &attrib, obj_data &scene)
         tinyobj::real_t vz = attrib.vertices[3 * size_t(idx.vertex_index) + 2];
         vertex.position = {vx, vy, vz};
 
-        if (idx.normal_index >= 0)
-        {
+        if (idx.normal_index >= 0) {
           tinyobj::real_t nx = attrib.normals[3 * size_t(idx.normal_index) + 0];
           tinyobj::real_t ny = attrib.normals[3 * size_t(idx.normal_index) + 1];
           tinyobj::real_t nz = attrib.normals[3 * size_t(idx.normal_index) + 2];
           vertex.normal = {nx, ny, nz};
         }
 
-        if (idx.texcoord_index >= 0)
-        {
+        if (idx.texcoord_index >= 0) {
           tinyobj::real_t tx =
               attrib.texcoords[2 * size_t(idx.texcoord_index) + 0];
           tinyobj::real_t ty =
@@ -433,20 +446,15 @@ void load_scene(const auto &shapes, const auto &attrib, obj_data &scene)
   }
 }
 
-void load_faces(const auto &shapes, std::vector<std::pair<int, int>> &faces)
-{
-  for (auto shape : shapes)
-  {
+void load_faces(const auto &shapes, std::vector<std::pair<int, int>> &faces) {
+  for (auto shape : shapes) {
     int cur = 0;
     int id = 0;
-    for (int i = 0; i < shape.mesh.material_ids.size(); i++)
-    {
+    for (int i = 0; i < shape.mesh.material_ids.size(); i++) {
       if (shape.mesh.material_ids[i] == shape.mesh.material_ids[id] && id == 0)
         cur++;
-      else
-      {
-        if (id == 0)
-          faces.emplace_back(shape.mesh.material_ids[id], 3 * cur);
+      else {
+        if (id == 0) faces.emplace_back(shape.mesh.material_ids[id], 3 * cur);
         id = i;
       }
     }
@@ -460,10 +468,8 @@ void load_faces(const auto &shapes, std::vector<std::pair<int, int>> &faces)
 }
 
 std::optional<GLuint> load_texture(const std::string &materials_dir,
-                                   const std::string &name)
-{
-  if (name == "")
-    return std::nullopt;
+                                   const std::string &name) {
+  if (name == "") return std::nullopt;
 
   int width, height, channels;
   std::string texture_path = materials_dir + name;
@@ -485,24 +491,19 @@ std::optional<GLuint> load_texture(const std::string &materials_dir,
 }
 
 void load_textures(const std::string &materials_dir, const auto &materials,
-                   std::map<std::string, GLuint> &textures)
-{
-  for (const auto &material : materials)
-  {
+                   std::map<std::string, GLuint> &textures) {
+  for (const auto &material : materials) {
     auto tex = load_texture(materials_dir, material.ambient_texname);
-    if (tex.has_value())
-      textures[material.ambient_texname] = *tex;
+    if (tex.has_value()) textures[material.ambient_texname] = *tex;
     tex = load_texture(materials_dir, material.alpha_texname);
-    if (tex.has_value())
-      textures[material.alpha_texname] = *tex;
+    if (tex.has_value()) textures[material.alpha_texname] = *tex;
+    tex = load_texture(materials_dir, material.bump_texname);
+    if (tex.has_value()) textures[material.bump_texname] = *tex;
   }
 }
 
-int main()
-try
-{
-  if (SDL_Init(SDL_INIT_VIDEO) != 0)
-    sdl2_fail("SDL_Init: ");
+int main() try {
+  if (SDL_Init(SDL_INIT_VIDEO) != 0) sdl2_fail("SDL_Init: ");
 
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -517,15 +518,13 @@ try
       "Sponza observer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800,
       600, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
 
-  if (!window)
-    sdl2_fail("SDL_CreateWindow: ");
+  if (!window) sdl2_fail("SDL_CreateWindow: ");
 
   int width, height;
   SDL_GetWindowSize(window, &width, &height);
 
   SDL_GLContext gl_context = SDL_GL_CreateContext(window);
-  if (!gl_context)
-    sdl2_fail("SDL_GL_CreateContext: ");
+  if (!gl_context) sdl2_fail("SDL_GL_CreateContext: ");
 
   if (auto result = glewInit(); result != GLEW_NO_ERROR)
     glew_fail("glewInit: ", result);
@@ -576,6 +575,8 @@ try
       glGetUniformLocation(program, "shadow_projection_sun");
   GLuint albedo_texture_location =
       glGetUniformLocation(program, "albedo_texture");
+  GLuint bump_texture_location = glGetUniformLocation(program, "bump_texture");
+  GLuint bump_location = glGetUniformLocation(program, "bump");
   GLuint alpha_location = glGetUniformLocation(program, "alpha");
   GLuint alpha_texture_location =
       glGetUniformLocation(program, "alpha_texture");
@@ -627,8 +628,7 @@ try
 
   tinyobj::ObjReader reader;
 
-  if (!reader.ParseFromFile(obj_path, reader_config))
-  {
+  if (!reader.ParseFromFile(obj_path, reader_config)) {
     if (!reader.Error().empty())
       std::cerr << "TinyObjReader: " << reader.Error();
 
@@ -660,8 +660,7 @@ try
 
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo);
 
-  auto setup_attribute = [](int index, gltf_model::accessor const &accessor)
-  {
+  auto setup_attribute = [](int index, gltf_model::accessor const &accessor) {
     glEnableVertexAttribArray(index);
     glVertexAttribPointer(index, accessor.size, accessor.type, GL_FALSE, 0,
                           reinterpret_cast<void *>(accessor.view.offset));
@@ -700,8 +699,7 @@ try
   auto maxx = min;
   auto maxy = min;
   auto maxz = min;
-  for (const auto &vertex : scene.vertices)
-  {
+  for (const auto &vertex : scene.vertices) {
     minx = std::min(minx, vertex.position[0]);
     miny = std::min(miny, vertex.position[1]);
     minz = std::min(minz, vertex.position[2]);
@@ -806,33 +804,35 @@ try
   std::vector<std::pair<int, int>> faces;
   load_faces(shapes, faces);
 
-  auto draw_scene = [&](bool depth)
-  {
+  auto draw_scene = [&](bool depth) {
     int first = 0;
-    if (!depth)
-    {
+    if (!depth) {
       glActiveTexture(GL_TEXTURE1);
       glUniform1i(albedo_texture_location, 1);
     }
 
-    for (auto face : faces)
-    {
+    for (auto face : faces) {
       int id = face.first;
-      if (!depth)
-      {
+      if (!depth) {
         if (textures.contains(materials[id].ambient_texname))
           glBindTexture(GL_TEXTURE_2D, textures[materials[id].ambient_texname]);
-        if (textures.contains(materials[id].alpha_texname))
-        {
+        if (textures.contains(materials[id].alpha_texname)) {
           glActiveTexture(GL_TEXTURE2);
           glUniform1i(alpha_texture_location, 2);
           glUniform1i(alpha_location, true);
           glBindTexture(GL_TEXTURE_2D, textures[materials[id].alpha_texname]);
           glActiveTexture(GL_TEXTURE1);
-        }
-        else
-        {
+        } else {
           glUniform1i(alpha_location, false);
+        }
+        if (textures.contains(materials[id].bump_texname)) {
+          glActiveTexture(GL_TEXTURE3);
+          glUniform1i(bump_texture_location, 3);
+          glUniform1i(bump_location, true);
+          glBindTexture(GL_TEXTURE_2D, textures[materials[id].bump_texname]);
+          glActiveTexture(GL_TEXTURE1);
+        } else {
+          glUniform1i(bump_location, false);
         }
 
         glUniform1f(glossiness_location, materials[id].specular[0]);
@@ -843,8 +843,7 @@ try
 
       first += face.second;
     }
-    if (!depth)
-      glActiveTexture(GL_TEXTURE0);
+    if (!depth) glActiveTexture(GL_TEXTURE0);
   };
 
   auto camera_pitch = 0.1f;
@@ -854,43 +853,36 @@ try
   // starting position
   bool paused = false;
   bool running = true;
-  while (running)
-  {
-    for (SDL_Event event; SDL_PollEvent(&event);)
-      switch (event.type)
-      {
-      case SDL_QUIT:
-        running = false;
-        break;
-      case SDL_WINDOWEVENT:
-        switch (event.window.event)
-        {
-        case SDL_WINDOWEVENT_RESIZED:
-          width = event.window.data1;
-          height = event.window.data2;
+  while (running) {
+    for (SDL_Event event; SDL_PollEvent(&event);) switch (event.type) {
+        case SDL_QUIT:
+          running = false;
           break;
-        }
-        break;
-      case SDL_KEYDOWN:
-        button_down[event.key.keysym.sym] = true;
-        if (event.key.keysym.sym == SDLK_SPACE)
-          paused = !paused;
-        break;
-      case SDL_KEYUP:
-        button_down[event.key.keysym.sym] = false;
-        break;
+        case SDL_WINDOWEVENT:
+          switch (event.window.event) {
+            case SDL_WINDOWEVENT_RESIZED:
+              width = event.window.data1;
+              height = event.window.data2;
+              break;
+          }
+          break;
+        case SDL_KEYDOWN:
+          button_down[event.key.keysym.sym] = true;
+          if (event.key.keysym.sym == SDLK_SPACE) paused = !paused;
+          break;
+        case SDL_KEYUP:
+          button_down[event.key.keysym.sym] = false;
+          break;
       }
 
-    if (!running)
-      break;
+    if (!running) break;
 
     auto now = std::chrono::high_resolution_clock::now();
     float dt = std::chrono::duration_cast<std::chrono::duration<float>>(
                    now - last_frame_start)
                    .count();
     last_frame_start = now;
-    if (!paused)
-      time += dt;
+    if (!paused) time += dt;
 
     //    if (button_down[SDLK_r])
     //    {
@@ -905,28 +897,18 @@ try
     auto y = 0.f;
     auto z = 0.f;
     auto move_delta = 300.f * dt;
-    if (button_down[SDLK_w])
-      x -= move_delta;
-    if (button_down[SDLK_s])
-      x += move_delta;
-    if (button_down[SDLK_a])
-      y -= move_delta;
-    if (button_down[SDLK_d])
-      y += move_delta;
-    if (button_down[SDLK_q])
-      z -= move_delta;
-    if (button_down[SDLK_e])
-      z += move_delta;
+    if (button_down[SDLK_w]) x -= move_delta;
+    if (button_down[SDLK_s]) x += move_delta;
+    if (button_down[SDLK_a]) y -= move_delta;
+    if (button_down[SDLK_d]) y += move_delta;
+    if (button_down[SDLK_q]) z -= move_delta;
+    if (button_down[SDLK_e]) z += move_delta;
 
     auto view_delta = 3.f * dt;
-    if (button_down[SDLK_LEFT])
-      camera_yaw -= view_delta;
-    if (button_down[SDLK_RIGHT])
-      camera_yaw += view_delta;
-    if (button_down[SDLK_UP])
-      camera_pitch -= view_delta;
-    if (button_down[SDLK_DOWN])
-      camera_pitch += view_delta;
+    if (button_down[SDLK_LEFT]) camera_yaw -= view_delta;
+    if (button_down[SDLK_RIGHT]) camera_yaw += view_delta;
+    if (button_down[SDLK_UP]) camera_pitch -= view_delta;
+    if (button_down[SDLK_DOWN]) camera_pitch += view_delta;
 
     camera_position +=
         x * glm::vec3(-std::sin(camera_yaw), 0.f, std::cos(camera_yaw));
@@ -942,7 +924,8 @@ try
     //    if (button_down[SDLK_SPACE])
     //    {
     //      point_light_position = camera_position;
-    //      std::cout << camera_position.x << '\t' << camera_position.y << '\t'
+    //      std::cout << camera_position.x << '\t' << camera_position.y <<
+    //      '\t'
     //                << camera_position.z << '\t' << camera_pitch << '\t'
     //                << camera_yaw << std::endl;
     //    }
@@ -1014,9 +997,11 @@ try
     //    for (unsigned int i = 0; i < 6; ++i)
     //    {
     //      glUniformMatrix4fv(shadow_projection_point_location, 1, GL_FALSE,
-    //                         reinterpret_cast<float *>(&shadowTransforms[i]));
+    //                         reinterpret_cast<float
+    //                         *>(&shadowTransforms[i]));
     //      glUniformMatrix4fv(shadow_projection_point_location_, 1, GL_FALSE,
-    //                         reinterpret_cast<float *>(&shadowTransforms[i]));
+    //                         reinterpret_cast<float
+    //                         *>(&shadowTransforms[i]));
     //    }
     glBindVertexArray(scene_vao);
     draw_scene(true);
@@ -1039,8 +1024,7 @@ try
     float X = 0, Y = 0, Z = 0;
     for (float x : {minx, maxx})
       for (float y : {miny, maxy})
-        for (float z : {minz, maxz})
-        {
+        for (float z : {minz, maxz}) {
           glm::vec3 V(x, y, z);
           X = std::max(X, abs(glm::dot(V - C, light_x)));
           Y = std::max(Y, abs(glm::dot(V - C, light_y)));
@@ -1141,9 +1125,7 @@ try
   }
   SDL_GL_DeleteContext(gl_context);
   SDL_DestroyWindow(window);
-}
-catch (std::exception const &e)
-{
+} catch (std::exception const &e) {
   std::cerr << e.what() << std::endl;
   return EXIT_FAILURE;
 }
