@@ -59,6 +59,8 @@ void main()
 const char msdf_fragment_shader_source[] =
     R"(#version 330 core
 
+uniform float time_since_last_input;
+uniform float fadeTime;
 uniform float sdf_scale;
 uniform sampler2D sdf_texture;
 
@@ -71,8 +73,9 @@ float median(vec3 v) {
 }
 
 void main()
-{
+{ 
     vec3 textColor = vec3(0.f); 
+    vec3 bgColor = vec3(1.f); 
     float textureValue =
     median(texture(sdf_texture, texcoord).rgb);
     float sdfValue = sdf_scale * (textureValue - 0.5);
@@ -83,10 +86,16 @@ void main()
     float bg_value = length(vec2(dFdx(bg_sdf_value), dFdy(bg_sdf_value))) / sqrt(2.0);
     float bg_alpha = smoothstep(-bg_value, bg_value, bg_sdf_value);
 
+    float factor =  time_since_last_input > fadeTime ? 1 : time_since_last_input / fadeTime;
+
     if(alpha < 0.1)
-        out_color = vec4(1.0, 1.0, 1.0, bg_alpha);
+    {
+        out_color = vec4(bgColor, mix(bg_alpha, 0, factor));
+    } 
     else
-        out_color = vec4(textColor, alpha);
+    {
+        out_color = vec4(textColor, mix(alpha, 0, factor));
+    }
 
 }
 )";
@@ -171,6 +180,9 @@ int main() try {
   GLuint transform_location = glGetUniformLocation(msdf_program, "transform");
   GLuint texture_location = glGetUniformLocation(msdf_program, "sdf_texture");
   GLuint scale_location = glGetUniformLocation(msdf_program, "sdf_scale");
+  GLuint time_location =
+      glGetUniformLocation(msdf_program, "time_since_last_input");
+  GLuint max_fade_location = glGetUniformLocation(msdf_program, "fadeTime");
 
   const std::string project_root = PROJECT_ROOT;
   const std::string font_path = project_root + "/font/font-msdf.json";
@@ -224,9 +236,9 @@ int main() try {
 
   std::map<SDL_Keycode, bool> button_down;
 
-  std::string text = "Hello, world!";
+  std::string text = "Helloo";
   bool text_changed = true;
-
+  const float fadeTime = 3.f;
   bool running = true;
   auto transform = glm::mat4(1.f);
   while (running) {
@@ -245,6 +257,10 @@ int main() try {
           break;
         case SDL_KEYDOWN:
           button_down[event.key.keysym.sym] = true;
+          if (event.key.keysym.sym == SDLK_RETURN) {
+            text.push_back('\n');
+            text_changed = true;
+          }
           if (event.key.keysym.sym == SDLK_BACKSPACE && !text.empty()) {
             text.pop_back();
             text_changed = true;
@@ -268,10 +284,30 @@ int main() try {
     last_frame_start = now;
     time += dt;
 
+    const auto height_offset = 30.f;
+    auto height_ = 0.f;
+    const auto line_width = 13;
     if (text_changed) {
       auto pen = glm::vec2{0.0};
+      int counter = 0;
+      for (int i = 0; i < text.size(); i++) {
+        counter++;
+        if (text[i] == '\n') {
+          counter = 0;
+          continue;
+        }
+        if (counter == line_width) {
+          text.insert(i, "\n");
+          counter = 0;
+        }
+      }
       auto vertices = std::vector<vertex>{6 * text.size()};
       for (int i = 0; i < text.size(); i++) {
+        if (text[i] == '\n') {
+          height_ += height_offset;
+          pen.x = 0;
+          continue;
+        }
         auto glyph = font.glyphs.at(text[i]);
         vertices[6 * i + 0].position = glm::vec2{0, 0};
         vertices[6 * i + 1].position = glm::vec2{0, glyph.height};
@@ -287,7 +323,8 @@ int main() try {
         vertices[6 * i + 4].texcoord = glm::vec2{0, glyph.height};
         vertices[6 * i + 5].texcoord = glm::vec2{glyph.width, glyph.height};
 
-        auto penGlyphOffset = pen + glm::vec2{glyph.xoffset, glyph.yoffset};
+        auto penGlyphOffset =
+            pen + glm::vec2{glyph.xoffset, glyph.yoffset + height_};
         auto texCoord = glm::vec2{glyph.x, glyph.y};
         auto texDim = glm::vec2{texture_width, texture_height};
         for (int j = 6 * i; j < 6 * (i + 1); j++) {
@@ -328,7 +365,9 @@ int main() try {
                                (float)height / 2.f - text_height / 2.f, 0.f));
 
       text_changed = false;
+      time = 0;
     }
+    if (time > fadeTime) text.clear();
 
     glClearColor(0.8f, 0.8f, 1.f, 0.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -342,6 +381,8 @@ int main() try {
     glUniformMatrix4fv(transform_location, 1, GL_FALSE,
                        reinterpret_cast<float *>(&transform));
     glUniform1f(scale_location, font.sdf_scale);
+    glUniform1f(max_fade_location, fadeTime);
+    glUniform1f(time_location, time);
     glBindVertexArray(vao);
     glUseProgram(msdf_program);
     glDrawArrays(GL_TRIANGLES, 0, 6 * text.size());
