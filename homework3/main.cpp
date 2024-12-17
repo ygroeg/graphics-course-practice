@@ -86,6 +86,7 @@ uniform vec3 sun_direction;
 uniform vec3 sun_color;
 uniform sampler2D albedo_texture;
 uniform sampler2D bump_texture;
+uniform sampler2D specular_texture;
 uniform mat4 model;
 uniform mat4 shadow_projection_sun;
 uniform sampler2D shadow_map;
@@ -93,9 +94,9 @@ uniform bool alpha;
 uniform sampler2D alpha_texture;
 uniform float power;
 uniform float glossiness;
-//uniform vec3 point_light_position;
-//uniform vec3 point_light_attenuation;
-//uniform vec3 point_light_color;
+uniform vec3 point_light_position;
+uniform vec3 point_light_attenuation;
+uniform vec3 point_light_color;
 uniform mat4 shadow_projection_point[6];
 //uniform samplerCube depthCubemap;
 
@@ -112,9 +113,10 @@ vec3 diffuse(vec3 normal, vec3 direction) {
 }
 
 vec3 specular(vec3 normal, vec3 direction) {
+    float gloss = texture(specular_texture, texcoord).x;
     vec3 reflected_direction = 2.0 * normal * dot(normal, direction) - direction;
     vec3 view_direction = normalize(camera_position - position);
-    return glossiness * albedo * pow(max(0.0, dot(reflected_direction, view_direction)), power);
+    return gloss * glossiness * albedo * pow(max(0.0, dot(reflected_direction, view_direction)), power);
 }
 
 vec3 phong(vec3 normal, vec3 direction) {
@@ -224,6 +226,15 @@ vec3 calc_sun_with_shadows() {
 //    //shadow of point light
 //}
 
+vec3 calc_point_light() {
+    vec3 bumpedNormal = getNormal(normal, position, texcoord, 0.f);
+    vec3 to_point = normalize(point_light_position - position);
+    float point_light_distance = distance(position, point_light_position);
+    float attenuation = point_light_attenuation.x + point_light_attenuation.y * point_light_distance + point_light_attenuation.z * point_light_distance * point_light_distance;
+    vec3 point_light = phong(bumpedNormal, to_point) * point_light_color / attenuation; 
+    return point_light;
+}
+
 void main()
 {
     if(alpha && texture(alpha_texture, texcoord).x < 0.5)
@@ -233,6 +244,7 @@ void main()
     albedo = texture(albedo_texture, texcoord).xyz;
     vec3 color = albedo * ambient_light;
     color += calc_sun_with_shadows();
+    color += calc_point_light();
     // color += calc_point_light_with_shadows();
 
     out_color = vec4(color, 1.0);
@@ -499,6 +511,8 @@ void load_textures(const std::string &materials_dir, const auto &materials,
     if (tex.has_value()) textures[material.alpha_texname] = *tex;
     tex = load_texture(materials_dir, material.bump_texname);
     if (tex.has_value()) textures[material.bump_texname] = *tex;
+    tex = load_texture(materials_dir, material.specular_texname);
+    if (tex.has_value()) textures[material.specular_texname] = *tex;
   }
 }
 
@@ -576,7 +590,8 @@ int main() try {
   GLuint albedo_texture_location =
       glGetUniformLocation(program, "albedo_texture");
   GLuint bump_texture_location = glGetUniformLocation(program, "bump_texture");
-  GLuint bump_location = glGetUniformLocation(program, "bump");
+  GLuint specular_texture_location =
+      glGetUniformLocation(program, "specular_texture");
   GLuint alpha_location = glGetUniformLocation(program, "alpha");
   GLuint alpha_texture_location =
       glGetUniformLocation(program, "alpha_texture");
@@ -584,8 +599,8 @@ int main() try {
   GLuint power_location = glGetUniformLocation(program, "power");
   GLuint point_light_attenuation_location =
       glGetUniformLocation(program, "point_light_attenuation");
-  //  GLuint point_light_position_location =
-  //      glGetUniformLocation(program, "point_light_position");
+  GLuint point_light_position_location =
+      glGetUniformLocation(program, "point_light_position");
   GLuint point_light_color_location =
       glGetUniformLocation(program, "point_light_color");
   GLuint shadow_map_location = glGetUniformLocation(program, "shadow_map");
@@ -640,7 +655,7 @@ int main() try {
 
   auto &attrib = reader.GetAttrib();
   auto &shapes = reader.GetShapes();
-  auto &materials = reader.GetMaterials();
+  std::vector<tinyobj::material_t> materials = reader.GetMaterials();
 
   obj_data scene;
   load_scene(shapes, attrib, scene);
@@ -691,11 +706,11 @@ int main() try {
     stbi_image_free(data);
   }
 
-  const float max = std::numeric_limits<decltype(max)>::max();
+  constexpr float max = std::numeric_limits<decltype(max)>::max();
   auto minx = max;
   auto miny = max;
   auto minz = max;
-  const float min = std::numeric_limits<decltype(min)>::min();
+  constexpr float min = std::numeric_limits<decltype(min)>::min();
   auto maxx = min;
   auto maxy = min;
   auto maxz = min;
@@ -792,9 +807,10 @@ int main() try {
   //  glReadBuffer(GL_NONE);
   //  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-  if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-    throw std::runtime_error("Framebuffer incomplete2");
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  // if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) !=
+  // GL_FRAMEBUFFER_COMPLETE)
+  //   throw std::runtime_error("Framebuffer incomplete2");
+  // glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
   auto last_frame_start = std::chrono::high_resolution_clock::now();
 
@@ -828,11 +844,15 @@ int main() try {
         if (textures.contains(materials[id].bump_texname)) {
           glActiveTexture(GL_TEXTURE3);
           glUniform1i(bump_texture_location, 3);
-          glUniform1i(bump_location, true);
           glBindTexture(GL_TEXTURE_2D, textures[materials[id].bump_texname]);
           glActiveTexture(GL_TEXTURE1);
-        } else {
-          glUniform1i(bump_location, false);
+        }
+        if (textures.contains(materials[id].specular_texname)) {
+          glActiveTexture(GL_TEXTURE4);
+          glUniform1i(specular_texture_location, 4);
+          glBindTexture(GL_TEXTURE_2D,
+                        textures[materials[id].specular_texname]);
+          glActiveTexture(GL_TEXTURE1);
         }
 
         glUniform1f(glossiness_location, materials[id].specular[0]);
@@ -849,7 +869,7 @@ int main() try {
   auto camera_pitch = 0.1f;
   auto camera_yaw = -0.6f;
   glm::vec3 camera_position{0.f, 1.5f, 3.f};
-  //  glm::vec3 point_light_position{-1350.f, 80.f, -460.f};
+  glm::vec3 point_light_position{1137.f, 252.f, 345.f};
   // starting position
   bool paused = false;
   bool running = true;
@@ -921,14 +941,12 @@ int main() try {
     view = glm::translate(view, -camera_position);
     glm::vec3 camera_position =
         (glm::inverse(view) * glm::vec4(0.f, 0.f, 0.f, 1.f)).xyz();
-    //    if (button_down[SDLK_SPACE])
-    //    {
-    //      point_light_position = camera_position;
-    //      std::cout << camera_position.x << '\t' << camera_position.y <<
-    //      '\t'
-    //                << camera_position.z << '\t' << camera_pitch << '\t'
-    //                << camera_yaw << std::endl;
-    //    }
+    if (button_down[SDLK_c]) {
+      point_light_position = camera_position;
+      std::cout << camera_position.x << '\t' << camera_position.y << '\t'
+                << camera_position.z << '\t' << camera_pitch << '\t'
+                << camera_yaw << std::endl;
+    }
 
     glm::mat4 model(1.f);
 
@@ -1051,6 +1069,7 @@ int main() try {
     draw_scene(true);
 
     glViewport(0, 0, width, height);
+    // glEnable(GL_FRAMEBUFFER_SRGB);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     glClearColor(0.8f, 0.8f, 0.9f, 0.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1107,10 +1126,10 @@ int main() try {
     glUniform3f(sun_color_location, 0.8f, 0.8f, 0.8f);
     glUniform3fv(sun_direction_location, 1,
                  reinterpret_cast<float *>(&sun_direction));
-    //    glUniform3fv(point_light_position_location, 1,
-    //                 (float *)(&point_light_position));
+    glUniform3fv(point_light_position_location, 1,
+                 (float *)(&point_light_position));
     glUniform3f(point_light_color_location, 1., 1., 0.);
-    glUniform3f(point_light_attenuation_location, 1, 0.001, 0.0001);
+    glUniform3f(point_light_attenuation_location, 1, 0.001, 0.000001);
     glUseProgram(program);
 
     glBindVertexArray(scene_vao);
