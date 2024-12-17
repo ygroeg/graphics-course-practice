@@ -311,37 +311,41 @@ void main()
 const char fragment_bunny_shader_source[] =
     R"(#version 330 core
 
-uniform sampler2D albedo;
-uniform vec3 light_direction;
+    uniform samplerCube skybox;
+    uniform vec3 camera_position;
 
-layout (location = 0) out vec4 out_color;
+    layout (location = 0) out vec4 out_color;
 
-in vec3 normal;
-in vec2 texcoord;
+    in vec3 normal;
+    in vec3 position;
 
-void main()
-{
-    vec3 albedo_color = texture(albedo, texcoord).rgb;
-
-    float ambient = 0.4;
-    float diffuse = max(0.0, dot(normalize(normal), light_direction));
-
-    out_color = vec4(albedo_color * (ambient + diffuse), 1.0);
-}
+    void main()
+    {
+        vec3 I = normalize(position - camera_position);
+        vec3 R = reflect(I, normalize(normal));
+        out_color = vec4(texture(skybox, R).rgb, 1.0);
+    }
 )";
 
 const char vertex_hdr_shader_source[] =
-    R"(#version 330 core
-layout (location = 0) in vec3 in_position;
-layout (location = 1) in vec3 in_normal;
-layout (location = 2) in vec2 in_texcoord;
+    R"( 
+    #version 330 core
+    layout (location = 0) in vec3 in_position;
+    layout (location = 1) in vec3 in_normal;
 
-out vec2 texcoord;
+    out vec3 normal;
+    out vec3 position; 
 
-void main() {
-  texcoord = in_texcoord;
-  gl_Position = vec4(in_position, 1.0);
-}
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
+
+    void main()
+    {
+        normal = mat3(transpose(inverse(model))) * in_normal;
+        position = vec3(model * vec4(in_position, 1.0));
+        gl_Position = projection * view * vec4(position, 1.0);
+    }  
 )";
 
 const char fragment_hdr_shader_source[] =
@@ -612,6 +616,10 @@ int main() try {
   GLuint bunny_light_direction_location =
       glGetUniformLocation(bunny_program, "light_direction");
   GLuint albedo_location = glGetUniformLocation(bunny_program, "albedo");
+  GLuint bunny_samplerCube_location =
+      glGetUniformLocation(bunny_program, "samplerCube");
+  GLuint bunny_camera_position_location =
+      glGetUniformLocation(bunny_program, "camera_position");
 
   glUseProgram(program);
   glUseProgram(rectangle_program);
@@ -640,6 +648,22 @@ int main() try {
 
   obj_data scene;
   load_scene(shapes, attrib, scene);
+
+  GLuint textureID;
+  glGenTextures(1, &textureID);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
+  int size = 256;
+  for (unsigned int i = 0; i < 6; i++) {
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, size, size, 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+  }
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
   // bunny
   const std::string model_path = project_root + "/bunny/bunny.gltf";
@@ -1017,11 +1041,16 @@ int main() try {
                          reinterpret_cast<float *>(&projection));
       glUniform3fv(bunny_light_direction_location, 1,
                    reinterpret_cast<float *>(&sun_direction));
-      glBindTexture(GL_TEXTURE_2D, texture);
+      glUniform3fv(bunny_camera_position_location, 1,
+                   (float *)(&camera_position));
+      glActiveTexture(GL_TEXTURE5);
+      glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
+      glUniform1i(bunny_samplerCube_location, 5);
       auto const &mesh = input_model.meshes[0];
       glBindVertexArray(vao);
       glDrawElements(GL_TRIANGLES, mesh.indices.count, mesh.indices.type,
                      reinterpret_cast<void *>(mesh.indices.view.offset));
+      glActiveTexture(GL_TEXTURE1);
     }
     glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
     glUseProgram(program);
