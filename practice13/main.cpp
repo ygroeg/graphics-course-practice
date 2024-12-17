@@ -30,18 +30,15 @@
 #include "gltf_loader.hpp"
 #include "stb_image.h"
 
-std::string to_string(std::string_view str)
-{
+std::string to_string(std::string_view str) {
   return std::string(str.begin(), str.end());
 }
 
-void sdl2_fail(std::string_view message)
-{
+void sdl2_fail(std::string_view message) {
   throw std::runtime_error(to_string(message) + SDL_GetError());
 }
 
-void glew_fail(std::string_view message, GLenum error)
-{
+void glew_fail(std::string_view message, GLenum error) {
   throw std::runtime_error(to_string(message) + reinterpret_cast<const char *>(
                                                     glewGetErrorString(error)));
 }
@@ -107,15 +104,13 @@ void main()
 }
 )";
 
-GLuint create_shader(GLenum type, const char *source)
-{
+GLuint create_shader(GLenum type, const char *source) {
   GLuint result = glCreateShader(type);
   glShaderSource(result, 1, &source, nullptr);
   glCompileShader(result);
   GLint status;
   glGetShaderiv(result, GL_COMPILE_STATUS, &status);
-  if (status != GL_TRUE)
-  {
+  if (status != GL_TRUE) {
     GLint info_log_length;
     glGetShaderiv(result, GL_INFO_LOG_LENGTH, &info_log_length);
     std::string info_log(info_log_length, '\0');
@@ -125,16 +120,15 @@ GLuint create_shader(GLenum type, const char *source)
   return result;
 }
 
-template <typename... Shaders> GLuint create_program(Shaders... shaders)
-{
+template <typename... Shaders>
+GLuint create_program(Shaders... shaders) {
   GLuint result = glCreateProgram();
   (glAttachShader(result, shaders), ...);
   glLinkProgram(result);
 
   GLint status;
   glGetProgramiv(result, GL_LINK_STATUS, &status);
-  if (status != GL_TRUE)
-  {
+  if (status != GL_TRUE) {
     GLint info_log_length;
     glGetProgramiv(result, GL_INFO_LOG_LENGTH, &info_log_length);
     std::string info_log(info_log_length, '\0');
@@ -145,11 +139,8 @@ template <typename... Shaders> GLuint create_program(Shaders... shaders)
   return result;
 }
 
-int main()
-try
-{
-  if (SDL_Init(SDL_INIT_VIDEO) != 0)
-    sdl2_fail("SDL_Init: ");
+int main() try {
+  if (SDL_Init(SDL_INIT_VIDEO) != 0) sdl2_fail("SDL_Init: ");
 
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -167,15 +158,13 @@ try
       SDL_WINDOWPOS_CENTERED, 800, 600,
       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
 
-  if (!window)
-    sdl2_fail("SDL_CreateWindow: ");
+  if (!window) sdl2_fail("SDL_CreateWindow: ");
 
   int width, height;
   SDL_GetWindowSize(window, &width, &height);
 
   SDL_GLContext gl_context = SDL_GL_CreateContext(window);
-  if (!gl_context)
-    sdl2_fail("SDL_GL_CreateContext: ");
+  if (!gl_context) sdl2_fail("SDL_GL_CreateContext: ");
 
   if (auto result = glewInit(); result != GLEW_NO_ERROR)
     glew_fail("glewInit: ", result);
@@ -207,16 +196,14 @@ try
   glBufferData(GL_ARRAY_BUFFER, input_model.buffer.size(),
                input_model.buffer.data(), GL_STATIC_DRAW);
 
-  struct mesh
-  {
+  struct mesh {
     GLuint vao;
     gltf_model::accessor indices;
     gltf_model::material material;
   };
 
-  auto setup_attribute =
-      [](int index, gltf_model::accessor const &accessor, bool integer = false)
-  {
+  auto setup_attribute = [](int index, gltf_model::accessor const &accessor,
+                            bool integer = false) {
     glEnableVertexAttribArray(index);
     if (integer)
       glVertexAttribIPointer(index, accessor.size, accessor.type, 0,
@@ -227,10 +214,8 @@ try
   };
 
   std::vector<mesh> meshes;
-  for (auto const &mesh : input_model.meshes)
-  {
-    for (auto const &primitive : mesh.primitives)
-    {
+  for (auto const &mesh : input_model.meshes) {
+    for (auto const &primitive : mesh.primitives) {
       auto &result = meshes.emplace_back();
       glGenVertexArrays(1, &result.vao);
       glBindVertexArray(result.vao);
@@ -249,12 +234,9 @@ try
   }
 
   std::map<std::string, GLuint> textures;
-  for (auto const &mesh : meshes)
-  {
-    if (!mesh.material.texture_path)
-      continue;
-    if (textures.contains(*mesh.material.texture_path))
-      continue;
+  for (auto const &mesh : meshes) {
+    if (!mesh.material.texture_path) continue;
+    if (textures.contains(*mesh.material.texture_path)) continue;
 
     auto path = std::filesystem::path(model_path).parent_path() /
                 *mesh.material.texture_path;
@@ -294,41 +276,36 @@ try
   int current_animation = 0;
   int prev_animation = 0;
   float last_switch = -1000;
+  auto delta = 1000.f;
   bool running = true;
 
   std::vector<gltf_model::animation> animations = {
       input_model.animations.at("hip-hop"), input_model.animations.at("rumba"),
       input_model.animations.at("flair")};
-  while (running)
-  {
-    for (SDL_Event event; SDL_PollEvent(&event);)
-      switch (event.type)
-      {
-      case SDL_QUIT:
-        running = false;
-        break;
-      case SDL_WINDOWEVENT:
-        switch (event.window.event)
-        {
-        case SDL_WINDOWEVENT_RESIZED:
-          width = event.window.data1;
-          height = event.window.data2;
-          glViewport(0, 0, width, height);
+  while (running) {
+    for (SDL_Event event; SDL_PollEvent(&event);) switch (event.type) {
+        case SDL_QUIT:
+          running = false;
           break;
-        }
-        break;
-      case SDL_KEYDOWN:
-        button_down[event.key.keysym.sym] = true;
-        if (event.key.keysym.sym == SDLK_SPACE)
-          paused = !paused;
-        break;
-      case SDL_KEYUP:
-        button_down[event.key.keysym.sym] = false;
-        break;
+        case SDL_WINDOWEVENT:
+          switch (event.window.event) {
+            case SDL_WINDOWEVENT_RESIZED:
+              width = event.window.data1;
+              height = event.window.data2;
+              glViewport(0, 0, width, height);
+              break;
+          }
+          break;
+        case SDL_KEYDOWN:
+          button_down[event.key.keysym.sym] = true;
+          if (event.key.keysym.sym == SDLK_SPACE) paused = !paused;
+          break;
+        case SDL_KEYUP:
+          button_down[event.key.keysym.sym] = false;
+          break;
       }
 
-    if (!running)
-      break;
+    if (!running) break;
 
     auto now = std::chrono::high_resolution_clock::now();
     float dt = std::chrono::duration_cast<std::chrono::duration<float>>(
@@ -336,47 +313,37 @@ try
                    .count();
     last_frame_start = now;
 
-    if (!paused)
-      time += dt;
+    if (!paused) time += dt;
 
-    if (button_down[SDLK_UP])
-      camera_distance -= 3.f * dt;
-    if (button_down[SDLK_DOWN])
-      camera_distance += 3.f * dt;
+    if (button_down[SDLK_UP]) camera_distance -= 3.f * dt;
+    if (button_down[SDLK_DOWN]) camera_distance += 3.f * dt;
 
-    if (button_down[SDLK_a])
-      camera_rotation -= 2.f * dt;
-    if (button_down[SDLK_d])
-      camera_rotation += 2.f * dt;
+    if (button_down[SDLK_a]) camera_rotation -= 2.f * dt;
+    if (button_down[SDLK_d]) camera_rotation += 2.f * dt;
 
-    if (button_down[SDLK_w])
-      view_angle -= 2.f * dt;
-    if (button_down[SDLK_s])
-      view_angle += 2.f * dt;
+    if (button_down[SDLK_w]) view_angle -= 2.f * dt;
+    if (button_down[SDLK_s]) view_angle += 2.f * dt;
 
-    auto delta = time - last_switch;
-    auto current_animation_duration = animations[current_animation].max_time;
+    const auto max_delta = 1.f;
     if (button_down[SDLK_1])
-      if (current_animation != 0 && delta > current_animation_duration)
-      {
+      if (current_animation != 0 && delta > max_delta) {
         prev_animation = current_animation;
         current_animation = 0;
         last_switch = time;
       }
     if (button_down[SDLK_2])
-      if (current_animation != 1 && delta > current_animation_duration)
-      {
+      if (current_animation != 1 && delta > max_delta) {
         prev_animation = current_animation;
         current_animation = 1;
         last_switch = time;
       }
     if (button_down[SDLK_3])
-      if (current_animation != 2 && delta > current_animation_duration)
-      {
+      if (current_animation != 2 && delta > max_delta) {
         prev_animation = current_animation;
         current_animation = 2;
         last_switch = time;
       }
+    delta = time - last_switch;
     glClearColor(0.8f, 0.8f, 1.f, 0.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -400,19 +367,16 @@ try
 
     glm::vec3 light_direction = glm::normalize(glm::vec3(1.f, 2.f, 3.f));
 
-    auto easeIn = [](float x)
-    {
+    auto easeIn = [](float x) {
       return 1 - cos((x * M_PI) / 2);
       //      return x == 0 ? 0 : std::pow(2, 10 * x - 10);
     };
+    auto current_animation_duration = animations[current_animation].max_time;
     auto prev_time = std::fmod(time, animations[prev_animation].max_time);
     auto current_time = std::fmod(time, current_animation_duration);
-    float factor = delta < current_animation_duration
-                       ? (delta / current_animation_duration)
-                       : 1;
+    float factor = delta < max_delta ? (delta / max_delta) : 1;
     std::vector<glm::mat4x3> bones(input_model.bones.size());
-    for (int i = 0; i < bones.size(); i++)
-    {
+    for (int i = 0; i < bones.size(); i++) {
       glm::vec3 translation = glm::lerp(
           animations[prev_animation].bones[i].translation(prev_time),
           animations[current_animation].bones[i].translation(current_time),
@@ -450,12 +414,9 @@ try
     glUniformMatrix4x3fv(bones_location, bones.size(), GL_FALSE,
                          reinterpret_cast<float *>(&bones[0][0][0]));
 
-    auto draw_meshes = [&](bool transparent)
-    {
-      for (auto const &mesh : meshes)
-      {
-        if (mesh.material.transparent != transparent)
-          continue;
+    auto draw_meshes = [&](bool transparent) {
+      for (auto const &mesh : meshes) {
+        if (mesh.material.transparent != transparent) continue;
 
         if (mesh.material.two_sided)
           glDisable(GL_CULL_FACE);
@@ -467,19 +428,15 @@ try
         else
           glDisable(GL_BLEND);
 
-        if (mesh.material.texture_path)
-        {
+        if (mesh.material.texture_path) {
           glBindTexture(GL_TEXTURE_2D, textures[*mesh.material.texture_path]);
           glUniform1i(use_texture_location, 1);
-        }
-        else if (mesh.material.color)
-        {
+        } else if (mesh.material.color) {
           glUniform1i(use_texture_location, 0);
           glUniform4fv(
               color_location, 1,
               reinterpret_cast<const float *>(&(*mesh.material.color)));
-        }
-        else
+        } else
           continue;
 
         glBindVertexArray(mesh.vao);
@@ -498,9 +455,7 @@ try
 
   SDL_GL_DeleteContext(gl_context);
   SDL_DestroyWindow(window);
-}
-catch (std::exception const &e)
-{
+} catch (std::exception const &e) {
   std::cerr << e.what() << std::endl;
   return EXIT_FAILURE;
 }
