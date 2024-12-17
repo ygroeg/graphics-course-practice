@@ -97,8 +97,6 @@ uniform float glossiness;
 uniform vec3 point_light_position;
 uniform vec3 point_light_attenuation;
 uniform vec3 point_light_color;
-uniform mat4 shadow_projection_point[6];
-//uniform samplerCube depthCubemap;
 
 in vec3 position;
 in vec3 normal;
@@ -107,6 +105,23 @@ in vec2 texcoord;
 layout (location = 0) out vec4 out_color;
 
 vec3 albedo;
+
+vec3 TonemapRaw(vec3 x)
+{
+    float A = 0.15;
+    float B = 0.50;
+    float C = 0.10;
+    float D = 0.20;
+    float E = 0.02;
+    float F = 0.30;
+    return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
+}
+
+vec3 Uncharted2Tonemap(vec3 color)
+{
+    float W = 11.2;
+    return TonemapRaw(color) / TonemapRaw(vec3(W));
+}
 
 vec3 diffuse(vec3 normal, vec3 direction) {
     return albedo * max(0.0, dot(normal, direction));
@@ -122,24 +137,6 @@ vec3 specular(vec3 normal, vec3 direction) {
 vec3 phong(vec3 normal, vec3 direction) {
     return diffuse(normal, direction) + specular(normal, direction);
 }
-
-//vec3 blur2(vec4 texcoord) {
-//    vec3 sum = vec3(0.0);
-//    vec3 sum_w = vec3(0.0);
-//    const int N = 7;
-//    float radius = 5.0;
-
-//    for (int x = -N; x <= N; ++x) {
-//        for (int y = -N; y <= N; ++y) {
-//            for (int z = -N; z <= N; ++z) {
-//                float c = exp(-float(x * x + y * y+ z * z) / (radius*radius*radius));
-//                sum += c * texture(depthCubemap, texcoord.xyz + vec3(x,y,z) / vec3(textureSize(depthCubemap, 0).xyx)).rgb;
-//                sum_w += c;
-//            }
-//        }
-//    }
-//    return sum / sum_w;
-//}
 
 vec2 blur(vec4 texcoord) {
     vec2 sum = vec2(0.0);
@@ -197,34 +194,7 @@ vec3 getNormal(vec3 vnormal, vec3 vworldpos, vec2 tc, float height)
 vec3 calc_sun_with_shadows() {
     vec3 bumpedNormal = getNormal(normal, position, texcoord, 0.f);
     return sun_color * max(0.0, dot(bumpedNormal, phong(bumpedNormal, sun_direction))) * shadow_factor(shadow_projection_sun);
-} 
-
-//float shadow_factor2(mat4 projection) {
-//    vec4 shadow_pos = projection * vec4(position, 1.0);
-//    shadow_pos /= shadow_pos.w;
-//    shadow_pos = shadow_pos * 0.5 + vec4(0.5);
-//    vec3 data = blur2(shadow_pos);
-//    float mu = data.r;
-//    float sigma = data.g - mu * mu;
-//    float z = shadow_pos.z - 0.03;
-//    float factor = (z < mu) ? 1.0
-//        : sigma / (sigma + (z - mu) * (z - mu));
-//    float delta = 0.125;
-//    return factor > delta ? (factor - delta) / (1 - delta) : 0.0;
-//}
-
-//vec3 calc_point_light_with_shadows() {
-//    vec3 to_point = normalize(point_light_position - position);
-//    float point_light_distance = distance(position, point_light_position);
-//    float attenuation = point_light_attenuation.x + point_light_attenuation.y * point_light_distance + point_light_attenuation.z * point_light_distance * point_light_distance;
-//    // vec3 point_light = phong(to_point) * point_light_color / attenuation;
-//    vec3 point_light = vec3(0.f);
-//    for (int i = 0; i < 6; i++) {
-//        point_light += point_light_color * max(0.0, dot(normal, phong(to_point))) * shadow_factor2(shadow_projection_point[i]);
-//    }
-//    return point_light;
-//    //shadow of point light
-//}
+}  
 
 vec3 calc_point_light() {
     vec3 bumpedNormal = getNormal(normal, position, texcoord, 0.f);
@@ -241,13 +211,13 @@ void main()
         discard;
 
     float ambient_light = 0.25;
+    float gamma = 2.2;
     albedo = texture(albedo_texture, texcoord).xyz;
-    vec3 color = albedo * ambient_light;
+    vec3 color = pow(albedo, vec3(1 / gamma)) * ambient_light;
     color += calc_sun_with_shadows();
     color += calc_point_light();
-    // color += calc_point_light_with_shadows();
 
-    out_color = vec4(color, 1.0);
+    out_color = vec4(Uncharted2Tonemap(color), 1.0);
 }
 )";
 
@@ -363,30 +333,6 @@ void main()
     out_color = vec4(albedo_color * (ambient + diffuse), 1.0);
 }
 )";
-// const char shadow_vertex_shader_source_[] =
-//     R"(#version 330 core
-
-// uniform mat4 shadow_projection_point;
-// uniform mat4 model;
-
-// layout (location = 0) in vec3 in_position;
-
-// void main()
-//{
-//     gl_Position = shadow_projection_point * model * vec4(in_position, 1.0);
-// }
-//)";
-
-// const char shadow_fragment_shader_source_[] =
-//     R"(#version 330 core
-
-// out vec4 out_vec;
-// void main() {
-//     float z = gl_FragCoord.z;
-//     out_vec = vec4(z, z * z + 0.25 * (dFdx(z) * dFdx(z) + dFdy(z) * dFdy(z)),
-//     0, 0);
-// }
-//)";
 
 GLuint create_shader(GLenum type, const char *source) {
   GLuint result = glCreateShader(type);
