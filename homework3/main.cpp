@@ -106,23 +106,6 @@ layout (location = 0) out vec4 out_color;
 
 vec3 albedo;
 
-vec3 TonemapRaw(vec3 x)
-{
-    float A = 0.15;
-    float B = 0.50;
-    float C = 0.10;
-    float D = 0.20;
-    float E = 0.02;
-    float F = 0.30;
-    return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
-}
-
-vec3 Uncharted2Tonemap(vec3 color)
-{
-    float W = 11.2;
-    return TonemapRaw(color) / TonemapRaw(vec3(W));
-}
-
 vec3 diffuse(vec3 normal, vec3 direction) {
     return albedo * max(0.0, dot(normal, direction));
 }
@@ -217,7 +200,7 @@ void main()
     color += calc_sun_with_shadows();
     color += calc_point_light();
 
-    out_color = vec4(Uncharted2Tonemap(color), 1.0);
+    out_color = vec4(color, 1.0);
 }
 )";
 
@@ -331,6 +314,54 @@ void main()
     float diffuse = max(0.0, dot(normalize(normal), light_direction));
 
     out_color = vec4(albedo_color * (ambient + diffuse), 1.0);
+}
+)";
+
+const char vertex_hdr_shader_source[] =
+    R"(#version 330 core
+layout (location = 0) in vec3 in_position;
+layout (location = 1) in vec3 in_normal;
+layout (location = 2) in vec2 in_texcoord;
+
+out vec2 texcoord;
+
+void main() {
+  texcoord = in_texcoord;
+  gl_Position = vec4(in_position, 1.0);
+}
+)";
+
+const char fragment_hdr_shader_source[] =
+    R"(#version 330 core
+layout (location = 0) out vec4 out_color;
+
+in vec2 texcoord;
+
+uniform sampler2D hdrBuffer;
+
+vec3 TonemapRaw(vec3 x)
+{
+    float A = 0.15;
+    float B = 0.50;
+    float C = 0.10;
+    float D = 0.20;
+    float E = 0.02;
+    float F = 0.30;
+    return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
+}
+
+vec3 Uncharted2Tonemap(vec3 color)
+{
+    float W = 11.2;
+    return TonemapRaw(color) / TonemapRaw(vec3(W));
+}
+
+void main() {
+    const float gamma = 2.2;
+    vec3 hdrColor = texture(hdrBuffer, texcoord).rgb; 
+    vec3 result = pow(Uncharted2Tonemap(hdrColor), vec3(1.0 / gamma));
+    out_color = vec4(result, 1.0);
+
 }
 )";
 
@@ -509,10 +540,10 @@ int main() try {
       create_shader(GL_VERTEX_SHADER, vertex_bunny_shader_source);
   auto bunny_fragment_shader =
       create_shader(GL_FRAGMENT_SHADER, fragment_bunny_shader_source);
-  //  auto shadow_vertex_shader_ =
-  //      create_shader(GL_VERTEX_SHADER, shadow_vertex_shader_source_);
-  //  auto shadow_fragment_shader_ =
-  //      create_shader(GL_FRAGMENT_SHADER, shadow_fragment_shader_source_);
+  auto hdr_vertex_shader =
+      create_shader(GL_VERTEX_SHADER, vertex_hdr_shader_source);
+  auto hdr_fragment_shader =
+      create_shader(GL_FRAGMENT_SHADER, fragment_hdr_shader_source);
   auto program = create_program(vertex_shader, fragment_shader);
   auto rectangle_program =
       create_program(rectangle_vertex_shader, rectangle_fragment_shader);
@@ -520,8 +551,7 @@ int main() try {
       create_program(shadow_vertex_shader, shadow_fragment_shader);
   auto bunny_program =
       create_program(bunny_vertex_shader, bunny_fragment_shader);
-  //  auto shadow_program_ =
-  //      create_program(shadow_vertex_shader_, shadow_fragment_shader_);
+  auto hdr_program = create_program(hdr_vertex_shader, hdr_fragment_shader);
 
   GLuint model_location = glGetUniformLocation(program, "model");
   GLuint view_location = glGetUniformLocation(program, "view");
@@ -570,15 +600,7 @@ int main() try {
       glGetUniformLocation(bunny_program, "light_direction");
   GLuint albedo_location = glGetUniformLocation(bunny_program, "albedo");
 
-  //  GLuint shadow_projection_point_location =
-  //      glGetUniformLocation(shadow_program_, "shadow_projection_point");
-  //  GLuint shadow_projection_point_location_ =
-  //      glGetUniformLocation(program, "shadow_projection_point");
-  //  GLuint depth_cube_location = glGetUniformLocation(program,
-  //  "depthCubemap"); GLuint shadow_model_location_ =
-  //      glGetUniformLocation(shadow_program_, "model");
   glUseProgram(program);
-  //  glUniform1i(depth_cube_location, 1);
   glUseProgram(rectangle_program);
 
   std::string project_root = PROJECT_ROOT;
@@ -606,8 +628,8 @@ int main() try {
   obj_data scene;
   load_scene(shapes, attrib, scene);
 
+  // bunny
   const std::string model_path = project_root + "/bunny/bunny.gltf";
-
   auto const input_model = load_gltf(model_path);
   GLuint vbo;
   glGenBuffers(1, &vbo);
@@ -726,37 +748,32 @@ int main() try {
   if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
     throw std::runtime_error("Framebuffer incomplete");
 
-  //  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
-  //  GLuint depthCubemap;
-  //  glGenTextures(1, &depthCubemap);
-  //  glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
-  //  //  for (unsigned int i = 0; i < 6; ++i)
-  //  //    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0,
-  //  GL_DEPTH_COMPONENT,
-  //  //                 shadow_map_size, shadow_map_size, 0,
-  //  GL_DEPTH_COMPONENT,
-  //  //                 GL_FLOAT, nullptr);
-  //  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  //  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  //  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  //  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  //  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-
-  //  GLuint depthMapFBO;
-  //  glGenFramebuffers(1, &depthMapFBO);
-  //  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, depthMapFBO);
-  //  glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-  //  depthCubemap,
-  //                       0);
-  //  glDrawBuffer(GL_NONE);
-  //  glReadBuffer(GL_NONE);
-  //  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-  // if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) !=
-  // GL_FRAMEBUFFER_COMPLETE)
-  //   throw std::runtime_error("Framebuffer incomplete2");
-  // glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  GLuint hdrFBO;
+  glGenFramebuffers(1, &hdrFBO);
+  // create floating point color buffer
+  GLuint colorBuffer;
+  glGenTextures(1, &colorBuffer);
+  glBindTexture(GL_TEXTURE_2D, colorBuffer);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA,
+               GL_FLOAT, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  // create depth buffer (renderbuffer)
+  GLuint rboDepth;
+  glGenRenderbuffers(1, &rboDepth);
+  glBindRenderbuffer(GL_RENDERBUFFER, rboDepth);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, width, height);
+  // attach buffers
+  glBindFramebuffer(GL_FRAMEBUFFER, hdrFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         colorBuffer, 0);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                            GL_RENDERBUFFER, rboDepth);
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    std::cout << "Framebuffer not complete!" << std::endl;
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
   auto last_frame_start = std::chrono::high_resolution_clock::now();
 
@@ -895,78 +912,14 @@ int main() try {
     }
 
     glm::mat4 model(1.f);
-
-    //    float near_plane = 1.0f;
-    //    float X = 0, Y = 0, Z = 0;
-    //    for (float x : {minx, maxx})
-    //      for (float y : {miny, maxy})
-    //        for (float z : {minz, maxz})
-    //        {
-    //          glm::vec3 V(x, y, z);
-    //          X = std::max(X, abs(glm::dot(V - point_light_position,
-    //                                       glm::vec3{1.0f, 0.0f, 0.0f})));
-    //          Y = std::max(Y, abs(glm::dot(V - point_light_position,
-    //                                       glm::vec3{0.0f, 1.0f, 0.0f})));
-    //          Z = std::max(Z, abs(glm::dot(V - point_light_position,
-    //                                       glm::vec3{0.0f, 0.0f, 1.0f})));
-    //        }
-    //    float far_plane = glm::length(glm::vec3{X, Y, Z});
-    //    glm::mat4 shadowProj = glm::perspective(
-    //        glm::radians(90.0f), (float)shadow_map_size /
-    //        (float)shadow_map_size, near_plane, far_plane);
-    //    std::vector<glm::mat4> shadowTransforms;
-    //    shadowTransforms.push_back(
-    //        shadowProj *
-    //        glm::lookAt(point_light_position,
-    //                    point_light_position + glm::vec3(1.0f, 0.0f, 0.0f),
-    //                    glm::vec3(0.0f, -1.0f, 0.0f)));
-    //    shadowTransforms.push_back(
-    //        shadowProj *
-    //        glm::lookAt(point_light_position,
-    //                    point_light_position + glm::vec3(-1.0f, 0.0f, 0.0f),
-    //                    glm::vec3(0.0f, -1.0f, 0.0f)));
-    //    shadowTransforms.push_back(
-    //        shadowProj *
-    //        glm::lookAt(point_light_position,
-    //                    point_light_position + glm::vec3(0.0f, 1.0f, 0.0f),
-    //                    glm::vec3(0.0f, 0.0f, 1.0f)));
-    //    shadowTransforms.push_back(
-    //        shadowProj *
-    //        glm::lookAt(point_light_position,
-    //                    point_light_position + glm::vec3(0.0f, -1.0f, 0.0f),
-    //                    glm::vec3(0.0f, 0.0f, -1.0f)));
-    //    shadowTransforms.push_back(
-    //        shadowProj *
-    //        glm::lookAt(point_light_position,
-    //                    point_light_position + glm::vec3(0.0f, 0.0f, 1.0f),
-    //                    glm::vec3(0.0f, -1.0f, 0.0f)));
-    //    shadowTransforms.push_back(
-    //        shadowProj *
-    //        glm::lookAt(point_light_position,
-    //                    point_light_position + glm::vec3(0.0f, 0.0f, -1.0f),
-    //                    glm::vec3(0.0f, -1.0f, 0.0f)));
-
-    //    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, depthMapFBO);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
     glViewport(0, 0, shadow_map_size, shadow_map_size);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
-    //    glUseProgram(shadow_program_);
-
-    //    glUniformMatrix4fv(shadow_model_location_, 1, GL_FALSE,
-    //                       reinterpret_cast<float *>(&model));
-    //    for (unsigned int i = 0; i < 6; ++i)
-    //    {
-    //      glUniformMatrix4fv(shadow_projection_point_location, 1, GL_FALSE,
-    //                         reinterpret_cast<float
-    //                         *>(&shadowTransforms[i]));
-    //      glUniformMatrix4fv(shadow_projection_point_location_, 1, GL_FALSE,
-    //                         reinterpret_cast<float
-    //                         *>(&shadowTransforms[i]));
-    //    }
     glBindVertexArray(scene_vao);
     draw_scene(true);
 
@@ -1002,8 +955,6 @@ int main() try {
     shadow_projection_sun[3] = {C, 1};
     shadow_projection_sun = glm::inverse(shadow_projection_sun);
 
-    //    glm::mat4
-    auto shadow_projection = []() {};
     glUseProgram(shadow_program);
 
     glUniformMatrix4fv(shadow_model_location, 1, GL_FALSE,
@@ -1012,6 +963,10 @@ int main() try {
                        reinterpret_cast<float *>(&shadow_projection_sun));
 
     glBindVertexArray(scene_vao);
+    draw_scene(true);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, hdrFBO);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     draw_scene(true);
 
     glViewport(0, 0, width, height);
@@ -1031,8 +986,6 @@ int main() try {
     float aspect = (float)height / (float)width;
     glm::mat4 projection =
         glm::perspective(glm::pi<float>() / 2.f, 1.f / aspect, near, far);
-
-    //    glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
 
     {
       glm::mat4 model(1.f);
@@ -1074,8 +1027,8 @@ int main() try {
                  reinterpret_cast<float *>(&sun_direction));
     glUniform3fv(point_light_position_location, 1,
                  (float *)(&point_light_position));
-    glUniform3f(point_light_color_location, 1., 1., 0.);
-    glUniform3f(point_light_attenuation_location, 1, 0.001, 0.000001);
+    glUniform3f(point_light_color_location, 10., 10., 10.);
+    glUniform3f(point_light_attenuation_location, 1, 0.001, 0.0001);
     glUseProgram(program);
 
     glBindVertexArray(scene_vao);
