@@ -106,6 +106,19 @@ layout (location = 0) out vec4 out_color;
 
 vec3 albedo;
 
+vec3 ambient_light = vec3(0.25);
+
+float getFog() {
+    float d = distance(position, camera_position);
+    const float FogMax = 2000.0;
+    const float FogMin = 0.0;
+
+    if (d>=FogMax) return 1;
+    if (d<=FogMin) return 0;
+
+    return 1 - (FogMax - d) / (FogMax - FogMin);
+}
+
 vec3 diffuse(vec3 normal, vec3 direction) {
     return albedo * max(0.0, dot(normal, direction));
 }
@@ -192,15 +205,15 @@ void main()
 {
     if(alpha && texture(alpha_texture, texcoord).x < 0.5)
         discard;
-
-    float ambient_light = 0.25;
     float gamma = 2.2;
     albedo = texture(albedo_texture, texcoord).xyz;
     vec3 color = pow(albedo, vec3(1 / gamma)) * ambient_light;
     color += calc_sun_with_shadows();
     color += calc_point_light();
 
-    out_color = vec4(color, 1.0);
+    color = mix(color, ambient_light, getFog());
+
+    out_color = vec4(color, 1);
 }
 )";
 
