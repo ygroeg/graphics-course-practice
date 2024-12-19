@@ -36,7 +36,7 @@ void sdl2_fail(std::string_view message) {
 }
 
 void glew_fail(std::string_view message, GLenum error) {
-  throw std::runtime_error(to_string(message) + reinterpret_cast<const char *>(
+  throw std::runtime_error(to_string(message) + reinterpret_cast<const char*>(
                                                     glewGetErrorString(error)));
 }
 
@@ -96,6 +96,7 @@ void main()
     {
         out_color = vec4(textColor, mix(alpha, 0, factor));
     }
+    // out_color = vec4(0.0, 0.0, 0.0, 1.0); 
 
 }
 )";
@@ -105,7 +106,7 @@ struct vertex {
   glm::vec2 texcoord;
 };
 
-GLuint create_shader(GLenum type, const char *source) {
+GLuint create_shader(GLenum type, const char* source) {
   GLuint result = glCreateShader(type);
   glShaderSource(result, 1, &source, nullptr);
   glCompileShader(result);
@@ -152,7 +153,7 @@ int main() try {
   SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
-  SDL_Window *window = SDL_CreateWindow(
+  SDL_Window* window = SDL_CreateWindow(
       "Graphics course practice 15", SDL_WINDOWPOS_CENTERED,
       SDL_WINDOWPOS_CENTERED, 800, 600,
       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
@@ -224,10 +225,10 @@ int main() try {
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vertex),
-                        (void *)offsetof(vertex, position));
+                        (void*)offsetof(vertex, position));
   glEnableVertexAttribArray(1);
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(vertex),
-                        (void *)offsetof(vertex, texcoord));
+                        (void*)offsetof(vertex, texcoord));
   auto last_frame_start = std::chrono::high_resolution_clock::now();
 
   float time = 0.f;
@@ -236,9 +237,12 @@ int main() try {
 
   std::map<SDL_Keycode, bool> button_down;
 
-  std::string text = "Helloo";
+  // std::string text =
+  //     "HellooHellooHellooHellooHellooHellooHelloo1HellooHellooHellooHellooHello"
+  //     "oHellooHelloo12HellooHellooHellooHellooHellooHellooHelloo13";
+  std::string text = "Hello";
   bool text_changed = true;
-  const float fadeTime = 3.f;
+  const float fadeTime = 1113.f;
   bool running = true;
   auto transform = glm::mat4(1.f);
   while (running) {
@@ -252,6 +256,7 @@ int main() try {
               width = event.window.data1;
               height = event.window.data2;
               glViewport(0, 0, width, height);
+              text_changed = true;
               break;
           }
           break;
@@ -284,55 +289,77 @@ int main() try {
     last_frame_start = now;
     time += dt;
 
+    // идти по буквам,
+    //     суммируя текущую длину строки(вы знаете размеры глифов из шрифта)
+    //         .Как только сумма превысила ширину экрана(или поля с текстом),
+    //     делаете перевод строки,
+    //     и с этого места наращиваете новую строку.Получше будет делать перевод
+    //         только на месте пробелов(или других whitespace - символов),
+    //     чтобы слова не разрывались на куски.
     const auto height_offset = 30.f;
     auto height_ = 0.f;
-    const auto line_width = 13;
+    auto counter = 0;
     if (text_changed) {
       auto pen = glm::vec2{0.0};
-      int counter = 0;
-      for (int i = 0; i < text.size(); i++) {
-        counter++;
-        if (text[i] == '\n') {
-          counter = 0;
-          continue;
-        }
-        if (counter == line_width) {
-          text.insert(i, "\n");
-          counter = 0;
-        }
-      }
+      const auto factor = 5.f;
       auto vertices = std::vector<vertex>{6 * text.size()};
+      auto chars_since_last_space = 0;
+      auto line_len_since_space = 0.f;
+      auto add_line = [&]() {
+        counter++;
+        height_ += height_offset;
+        line_len_since_space = 0;
+        chars_since_last_space = 0;
+        pen.x = 0;
+      };
+      const auto max_w = width / factor - 1;
       for (int i = 0; i < text.size(); i++) {
         if (text[i] == '\n') {
-          height_ += height_offset;
-          pen.x = 0;
+          add_line();
           continue;
         }
-        auto glyph = font.glyphs.at(text[i]);
+        if (text[i] == ' ') {
+          line_len_since_space = 0;
+          chars_since_last_space = 0;
+        }
+        const auto glyph = font.glyphs.at(text[i]);
+        const auto gh = glyph.height;
+        const auto gw = glyph.width;
+        const auto delta_x = glyph.advance;
+        chars_since_last_space++;
         vertices[6 * i + 0].position = glm::vec2{0, 0};
-        vertices[6 * i + 1].position = glm::vec2{0, glyph.height};
-        vertices[6 * i + 2].position = glm::vec2{glyph.width, 0};
-        vertices[6 * i + 3].position = glm::vec2{glyph.width, 0};
-        vertices[6 * i + 4].position = glm::vec2{0, glyph.height};
-        vertices[6 * i + 5].position = glm::vec2{glyph.width, glyph.height};
+        vertices[6 * i + 1].position = glm::vec2{0, gh};
+        vertices[6 * i + 2].position = glm::vec2{gw, 0};
+        vertices[6 * i + 3].position = glm::vec2{gw, 0};
+        vertices[6 * i + 4].position = glm::vec2{0, gh};
+        vertices[6 * i + 5].position = glm::vec2{gw, gh};
 
         vertices[6 * i + 0].texcoord = glm::vec2{0, 0};
-        vertices[6 * i + 1].texcoord = glm::vec2{0, glyph.height};
-        vertices[6 * i + 2].texcoord = glm::vec2{glyph.width, 0};
-        vertices[6 * i + 3].texcoord = glm::vec2{glyph.width, 0};
-        vertices[6 * i + 4].texcoord = glm::vec2{0, glyph.height};
-        vertices[6 * i + 5].texcoord = glm::vec2{glyph.width, glyph.height};
-
-        auto penGlyphOffset =
+        vertices[6 * i + 1].texcoord = glm::vec2{0, gh};
+        vertices[6 * i + 2].texcoord = glm::vec2{gw, 0};
+        vertices[6 * i + 3].texcoord = glm::vec2{gw, 0};
+        vertices[6 * i + 4].texcoord = glm::vec2{0, gh};
+        vertices[6 * i + 5].texcoord = glm::vec2{gw, gh};
+        // перевод строк
+        if ((line_len_since_space - pen.x) >= 1e-6 &&
+            delta_x + line_len_since_space > max_w) {
+          i -= chars_since_last_space;
+          add_line();
+        }
+        if (delta_x + pen.x > max_w) {
+          add_line();
+        }
+        const auto penGlyphOffset =
             pen + glm::vec2{glyph.xoffset, glyph.yoffset + height_};
-        auto texCoord = glm::vec2{glyph.x, glyph.y};
-        auto texDim = glm::vec2{texture_width, texture_height};
+        const auto texCoord = glm::vec2{glyph.x, glyph.y};
+        const auto texDim = glm::vec2{texture_width, texture_height};
         for (int j = 6 * i; j < 6 * (i + 1); j++) {
           vertices[j].position += penGlyphOffset;
           vertices[j].texcoord += texCoord;
           vertices[j].texcoord /= texDim;
         }
-        pen.x += glyph.advance;
+        line_len_since_space += delta_x;
+        pen.x += delta_x;
       }
       glBindBuffer(GL_ARRAY_BUFFER, vbo);
       glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vertex),
@@ -343,27 +370,26 @@ int main() try {
       auto xmax = std::numeric_limits<float>::min();
       auto ymax = std::numeric_limits<float>::min();
 
-      for (auto &v : vertices) {
+      for (auto& v : vertices) {
         xmin = std::min(xmin, v.position.x);
         xmax = std::max(xmax, v.position.x);
         ymin = std::min(ymin, v.position.y);
         ymax = std::max(ymax, v.position.y);
       }
 
-      auto text_width = xmax - xmin;
-      auto text_height = ymax - ymin;
+      const auto text_width = xmax - xmin;
+      const auto text_height = ymax - ymin;
 
       transform = glm::mat4(1.f);
-      auto factor = 5.f;
       transform = glm::scale(transform, glm::vec3(factor, factor, 0.f));
       transform = glm::rotate(transform, (float)M_PI, glm::vec3(1.f, 0.f, 0.f));
       transform = glm::translate(transform, glm::vec3(-1.f, -1.f, 0.f));
       transform = glm::scale(
           transform, glm::vec3(2.f / (float)width, 2.f / (float)height, 0.f));
+      auto y = height * (1 + 1 / factor) / 2.f - text_height;
       transform = glm::translate(
-          transform, glm::vec3((float)width / 2.f - text_width / 2.f,
-                               (float)height / 2.f - text_height / 2.f, 0.f));
-
+          transform, glm::vec3((float)width / 2.f - text_width / 2.f, y, 0.f));
+      counter = 0;
       text_changed = false;
       time = 0;
     }
@@ -379,7 +405,7 @@ int main() try {
     glBindTexture(GL_TEXTURE_2D, texture);
 
     glUniformMatrix4fv(transform_location, 1, GL_FALSE,
-                       reinterpret_cast<float *>(&transform));
+                       reinterpret_cast<float*>(&transform));
     glUniform1f(scale_location, font.sdf_scale);
     glUniform1f(max_fade_location, fadeTime);
     glUniform1f(time_location, time);
@@ -391,7 +417,7 @@ int main() try {
 
   SDL_GL_DeleteContext(gl_context);
   SDL_DestroyWindow(window);
-} catch (std::exception const &e) {
+} catch (std::exception const& e) {
   std::cerr << e.what() << std::endl;
   return EXIT_FAILURE;
 }
