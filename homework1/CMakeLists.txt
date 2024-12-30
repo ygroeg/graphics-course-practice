@@ -21,12 +21,19 @@ if(APPLE)
 endif()
 
 set(TARGET_NAME "${PROJECT_NAME}")
+add_subdirectory(glm)
 
 add_executable(${TARGET_NAME} main.cpp)
 target_include_directories(${TARGET_NAME} PUBLIC
 	"${SDL2_INCLUDE_DIRS}"
 	"${GLEW_INCLUDE_DIRS}"
 	"${OPENGL_INCLUDE_DIRS}"
+)
+target_link_libraries(${TARGET_NAME} PUBLIC
+        glm
+        "${GLEW_LIBRARIES}"
+        "${SDL2_LIBRARIES}"
+        "${OPENGL_LIBRARIES}"
 )
 target_link_libraries(${TARGET_NAME} PUBLIC
 	"${GLEW_LIBRARIES}"
