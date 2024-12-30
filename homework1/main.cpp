@@ -41,6 +41,7 @@ const char vertex_shader_source[] =
     uniform mat4 view;
     uniform mat4 projection;
     uniform int dimension;
+    uniform int shader_variation;
     uniform float time;
     
     layout (location = 0) in vec2 in_position;
@@ -103,61 +104,95 @@ const char vertex_shader_source[] =
       Balls[9].color = vec3(1.0, 1.0, 1.0);
     }
 
-    bool inThreshold(MetaBall ball, vec2 position) 
+    float relativeDistance(MetaBall ball, vec2 position) 
     {
         float dx = position.x - ball.pos.x;
         float dy = position.y - ball.pos.y;
         float res = (ball.r * ball.r) / (dx * dx + dy * dy);
-        return res > 1;
+        return res;
+    }
+
+    bool inThreshold(MetaBall ball, vec2 position) 
+    {
+        return relativeDistance(ball, position) > 1;
     }
 
     vec3 calculateColor(vec2 position) 
     {
-      //vec3 sum = vec3(0.0, 0.0, 0.0);
-      //for (int i = 0; i < balls_num; i++)
-      //{
-      //  if (inThreshold(Balls[i], position))
-      //  {
-      //    sum += Balls[i].color;
-      //  }
-      //}
-      //sum.r = sum.r > 255 ? 255 : sum.r;      
-      //sum.g = sum.g > 255 ? 255 : sum.g;      
-      //sum.b = sum.b > 255 ? 255 : sum.b;
-      //return sum;      
-      vec3 sum = vec3(0.0, 0.0, 0.0);
+      float threshold = 0.0f;
+      const float line_d = 2;
+      const float max_threshold = .9f;
       float max_d = 1.0 / 0.0; // infinity
+      vec3 selected_color = vec3(0.0, 0.0, 0.0);
+      vec3 sum = vec3(0.0, 0.0, 0.0);
       for (int i = 0; i < balls_num; i++)
       {
-        if (!inThreshold(Balls[i], position))
-          continue;
-
-        float dx = position.x - Balls[i].pos.x;
-        float dy = position.y - Balls[i].pos.y;
-        float d2 = dx * dx + dy * dy;
-        if (d2 < max_d) {
-            max_d = d2;
-            sum = vec3(Balls[i].color.r, Balls[i].color.g, Balls[i].color.b);
+        switch (shader_variation)
+        {
+          case 0:
+          case 3:
+            {
+              float dx = position.x - Balls[i].pos.x;
+              float dy = position.y - Balls[i].pos.y;
+              float d2 = dx * dx + dy * dy;
+              if (d2 < max_d) 
+              {
+                  max_d = d2;
+                  selected_color = vec3(Balls[i].color.r, Balls[i].color.g, Balls[i].color.b);
+              }
+              threshold += relativeDistance(Balls[i], position);
+              if (threshold > max_threshold)
+                  sum = selected_color;
+            }
+            break;
+          case 1:
+            {
+              if (!inThreshold(Balls[i], position))
+                continue;
+              sum = vec3(Balls[i].color.r, Balls[i].color.g, Balls[i].color.b);
+            }
+            break;
+          case 2:
+            { 
+              float dx = position.x - Balls[i].pos.x;
+              float dy = position.y - Balls[i].pos.y;
+              float d2 = dx * dx + dy * dy;
+              float r = pow(Balls[i].r, 2);
+              float dr = pow(Balls[i].r - line_d, 2);
+              if (r > d2 && dr < d2) 
+                sum = vec3(Balls[i].color.r, Balls[i].color.g, Balls[i].color.b);
+            }
+            break;
+          default:
+            sum = vec3(0, 0, 0);
         }
+      }      
+      switch (shader_variation)
+      {
+        case 0:
+          {
+            if (threshold > max_threshold)
+            {
+              sum = selected_color;
+            }
+          }
+          break;
+        case 3:
+          {
+            if (threshold > max_threshold)
+            {
+              sum = vec3(0.0, 1.0, 0.0);
+            }
+          }
+          break;
+        default:
+          break;
       }
       return sum;
     }
 
     void main()
     {
-//	    MetaBall  mbr;
-//        mbr.pos = 0.7 * sin(time*.5 + vec2(4.0, 0.5) + 6.0);
-//        mbr.r = 1.6;
-//        gl_Position =  view * transform * vec4(in_position, 0.0, 1.0);
-
-        //if (in_position.x < dimension / 2.f && in_position.y < dimension / 2.f)
-        //    color = vec4(1., 1., 1., 1.);
-        //else
-        //    color = vec4(1., 0., 0.,1.);
-        //vec2 initial = vec2(dimension / 2.f, dimension / 2.f);
-        // vec2 initial = vec2(0, 0);
-//        vec2 initial = mbr.pos;
-//        color = vec4(func(time, initial, in_position.xy), 0., 0.,1.);
         calculateBallsPositions(time);
         gl_Position = projection * view * model * vec4(in_position, 0.0, 1.0);
         color = vec4(calculateColor(in_position), 1.);
@@ -171,7 +206,6 @@ const char fragment_shader_source[] =
 
     layout (location = 0) out vec4 out_color;
 
-    // vec2 uv = (2.0 * fragCoord.xy - iResolution.xy) / iResolution.y;
     void main()
     {
         out_color = vec4(color);
@@ -269,11 +303,11 @@ int main() try {
   const auto projection_location = glGetUniformLocation(program, "projection");
   const auto dimension_location = glGetUniformLocation(program, "dimension");
   const auto time_location = glGetUniformLocation(program, "time");
-  const auto ballsNum_location = glGetUniformLocation(program, "ballsNum");
+  const auto shader_variation_location =
+      glGetUniformLocation(program, "shader_variation");
 
   auto vertices = std::vector<Vertex>{};
   auto indices = std::vector<uint32_t>{};
-  // make grid
   const auto dimension = 1024;
 
   auto w = dimension;
@@ -313,7 +347,7 @@ int main() try {
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex),
                         (void *)offsetof(Vertex, position));
-  auto ballsNum = 1;
+  auto shader_variation = 0;
   float speed = 0.0001f;
   const auto dSpeed = 0.0001f;
   bool running = true;
@@ -340,9 +374,11 @@ int main() try {
           if (event.key.keysym.sym == SDLK_SPACE) paused = !paused;
           if (key_down[SDL_SCANCODE_UP]) speed += dSpeed;
           if (key_down[SDL_SCANCODE_DOWN]) speed -= dSpeed;
-          if (key_down[SDL_SCANCODE_RIGHT]) ballsNum++;
+          if (key_down[SDL_SCANCODE_RIGHT])
+            shader_variation =
+                shader_variation == 5 ? shader_variation : shader_variation + 1;
           if (key_down[SDL_SCANCODE_LEFT])
-            ballsNum = ballsNum == 0 ? 0 : ballsNum - 1;
+            shader_variation = shader_variation == 0 ? 0 : shader_variation - 1;
 
           break;
         case SDL_KEYUP:
@@ -385,6 +421,7 @@ int main() try {
     // view = glm::rotate(view, view_angle, {1.f, 0.f, 0.f});
     model = glm::scale(model, glm::vec3(0.001, 0.001, 0.001));
     glUniform1i(dimension_location, dimension);
+    glUniform1i(shader_variation_location, shader_variation);
     glUniform1f(time_location, time);
     glUniformMatrix4fv(model_location, 1, GL_FALSE,
                        reinterpret_cast<float *>(&model));
