@@ -60,7 +60,7 @@ const char vertex_shader_source[] =
 
     void calculateBallsPositions(float t) 
     {
-      const int radius = 50;
+      float radius = dimension * 0.05;
       const float c = 1.0f;
 
       Balls[0].pos = 0.4 * dimension * vec2(sin(t * c), cos(t * c)) + dimension / 2.f;
@@ -115,6 +115,11 @@ const char vertex_shader_source[] =
     bool inThreshold(MetaBall ball, vec2 position) 
     {
         return relativeDistance(ball, position) > 1;
+    }
+
+    float elevationFunction(vec2 pos) 
+    {
+      return 1 / (2 + sin(2 * sqrt(pow(pos.x / 10, 2) + pow(pos.y / 10, 2)))) * (.75 + .5 * sin(pos.x / 10 * 2));
     }
 
     vec3 calculateColor(vec2 position) 
@@ -183,6 +188,12 @@ const char vertex_shader_source[] =
             {
               sum = vec3(0.0, 1.0, 0.0);
             }
+          }
+          break;
+        case 4:
+          {
+            float res = elevationFunction(position);
+            sum = vec3(res, 0, 0);
           }
           break;
         default:
@@ -347,7 +358,7 @@ int main() try {
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex),
                         (void *)offsetof(Vertex, position));
-  auto shader_variation = 0;
+  auto shader_variation = 4;
   float speed = 0.0001f;
   const auto dSpeed = 0.0001f;
   bool running = true;
@@ -404,7 +415,7 @@ int main() try {
     last_frame_start = now;
     auto far = 5.f;
     // float view_angle = 0.f;
-    float camera_distance = 0.5f;
+    float camera_distance = 0.95f;
     float aspect = (float)height / (float)width;
     glm::mat4 model(1.f);
     glm::mat4 view(1.f);
@@ -419,7 +430,9 @@ int main() try {
     view = glm::mat4(1.f);
     view = glm::translate(view, {-camera_distance, -camera_distance, 1.f});
     // view = glm::rotate(view, view_angle, {1.f, 0.f, 0.f});
-    model = glm::scale(model, glm::vec3(0.001, 0.001, 0.001));
+    auto scale_factor = 0.0018f;
+    model =
+        glm::scale(model, glm::vec3(scale_factor, scale_factor, scale_factor));
     glUniform1i(dimension_location, dimension);
     glUniform1i(shader_variation_location, shader_variation);
     glUniform1f(time_location, time);
