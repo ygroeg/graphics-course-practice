@@ -16,6 +16,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -39,15 +40,17 @@ const char vertex_shader_source[] =
 
     uniform mat4 mvp;
 
-    layout (location = 0) in vec2 in_position;
+    layout (location = 0) in vec3 in_position;
+    layout (location = 1) in vec4 in_color;
 
     out vec4 color;
 
     void main()
     {
-        gl_Position = mvp * vec4(in_position, 0.0 , 1.0);
-        color = vec4(1.0, 0.0, 0., 1.);
-//        color = vec4(gl_Position) + 0.5;
+      gl_Position = mvp * vec4(in_position, 1.0);
+	    color = in_color;
+      // color = vec4(1.0, 0.0, 0.0, 1.0);
+      // color = vec4(gl_Position) + 0.5;
     }
 )";
 
@@ -60,7 +63,7 @@ const char fragment_shader_source[] =
 
     void main()
     {
-        out_color = vec4(color);
+      out_color = color;
     }
 )";
 
@@ -106,12 +109,12 @@ struct vertex {
 
 struct metaball {
   glm::vec2 position;
-  glm::vec2 speed;
+  glm::vec2 direction;
   float radius;
   float weight;
 };
 
-float calc_metaball(const metaball &ball, float x, float y) {
+float calculate_metaball(const metaball &ball, float x, float y) {
   float xb = ball.position.x;
   float yb = ball.position.y;
   float r = ball.radius;
@@ -119,6 +122,115 @@ float calc_metaball(const metaball &ball, float x, float y) {
 
   return w * exp(-((x - xb) * (x - xb) + (y - yb) * (y - yb)) / (r * r));
 }
+
+int width;
+int height;
+
+glm::mat4 init_camera() {
+  const auto aspect = (float)height / (float)width;
+  const auto far = 5.f;
+  glm::mat4 projection = glm::ortho(-1.f, 1.f, -1.f, 1.f, -far, far);
+  glm::mat4 p(0.f);
+  p[0][0] = aspect;
+  p[1][1] = 1.f;
+  p[2][2] = -1.f;
+  p[3][3] = 1.f;
+  projection = projection * p;
+  glm::mat4 view(1.f);
+  const auto camera_distance = 500.f;
+  view = glm::translate(view, {-camera_distance, -camera_distance, 0.f});
+  glm::mat4 model(1.f);
+  const auto scale_factor = 0.0015f;
+  model = glm::scale(model, glm::vec3(scale_factor));
+
+  return model * view * projection;
+}
+
+const auto range = 10.f;
+const auto dimension = 1024;
+const auto w = dimension;
+const auto h = dimension;
+auto vertices = std::vector<vertex>{};
+auto indices = std::vector<uint32_t>{};
+auto metaballs = std::vector<metaball>{};
+
+void init_metaballs() {
+  auto rd = std::random_device{};
+  auto gen = std::mt19937{rd()};
+  auto dis = std::uniform_real_distribution<>{-2.f, 2.f};
+  auto dis2 = std::uniform_real_distribution<>{0.5f, 1.5f};
+
+  for (int i = 0; i < 50; ++i)
+    metaballs.push_back({{dis(gen), dis(gen)},
+                         {dis(gen), dis(gen)},
+                         (float)dis2(gen),
+                         (float)dis(gen) * 0.5f});
+}
+
+void init_indicies() {
+  indices.clear();
+  for (int i = 0; i < h - 1; ++i)
+    for (int j = 0; j < w - 1; ++j) {
+      indices.push_back(i * w + j + 1);
+      indices.push_back(i * w + j + w);
+      indices.push_back(i * w + j);
+      indices.push_back(i * w + j + 1);
+      indices.push_back(i * w + j + w + 1);
+      indices.push_back(i * w + j + w);
+    }
+}
+
+void update_metaballs(std::vector<metaball> &balls, float dt) {
+  for (auto &ball : balls) {
+    ball.position.x += dt * ball.direction.x;
+    ball.position.y += dt * ball.direction.y;
+    ball.direction.x *= abs(ball.position.x) > range ? -1 : 1;
+    ball.direction.y *= abs(ball.position.y) > range ? -1 : 1;
+  }
+}
+
+// void update_vertices() {
+//   vertices.resize(side_size * side_size);
+//   heights.resize(side_size * side_size);
+//   float max_z = -1e9;
+//   float min_z = 1e9;
+//   for (int i = 0; i < side_size; ++i) {
+//     for (int j = 0; j < side_size; ++j) {
+//       float x = 2.f * range * i / (side_size - 1) - range;
+//       float y = 2.f * range * j / (side_size - 1) - range;
+//       float z = 0;
+//
+//       for (int i = 0; i < metaballs.size(); ++i) {
+//         z += calc_metaball(x, y, i);
+//       }
+//
+//       heights[i * side_size + j] = z / range;
+//
+//       if (z / range > max_z) {
+//         max_z = z / range;
+//       }
+//
+//       if (z / range < min_z) {
+//         min_z = z / range;
+//       }
+//
+//       vertices[i * side_size + j] =
+//           vertex({{x / range, -y / range, z / range}, {0, 0, 0, 255}});
+//     }
+//   }
+//
+//   for (int i = 0; i < side_size; ++i) {
+//     for (int j = 0; j < side_size; ++j) {
+//       vec3 position = vertices[i * side_size + j].position;
+//       float part = (position.z - min_z) / (max_z - min_z);
+//
+//       vertices[i * side_size + j] =
+//           vertex{position,
+//                  {uint8_t(255 * part), uint8_t(0), uint8_t(255 * part),
+//                  255}};
+//     }
+//   }
+// }
 
 int main() try {
   if (SDL_Init(SDL_INIT_VIDEO) != 0) sdl2_fail("SDL_Init: ");
@@ -129,7 +241,6 @@ int main() try {
 
   if (!window) sdl2_fail("SDL_CreateWindow: ");
 
-  int width, height;
   SDL_GetWindowSize(window, &width, &height);
 
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -154,8 +265,6 @@ int main() try {
   if (!GLEW_VERSION_3_3)
     throw std::runtime_error("OpenGL 3.3 is not supported");
 
-  glClearColor(0.8f, 0.8f, 1.f, 0.f);
-
   GLuint vertex_shader = create_shader(GL_VERTEX_SHADER, vertex_shader_source);
   GLuint fragment_shader =
       create_shader(GL_FRAGMENT_SHADER, fragment_shader_source);
@@ -164,23 +273,12 @@ int main() try {
   const auto mvp_location = glGetUniformLocation(program, "mvp");
 
   // make grid
-  auto vertices = std::vector<vertex>{};
-  auto indices = std::vector<uint32_t>{};
-  const auto dimension = 1024;
-  const auto w = dimension;
-  const auto h = dimension;
   for (int i = 0; i < h; i++)
-    for (int j = 0; j < w; j++) vertices.push_back({glm::vec3{i, j, 0}});
+    for (int j = 0; j < w; j++)
+      vertices.push_back({glm::vec3{i, j, 0}, {0, 255, 0, 255}});
 
-  for (int i = 0; i < h - 1; ++i)
-    for (int j = 0; j < w - 1; ++j) {
-      indices.push_back(i * w + j + 1);
-      indices.push_back(i * w + j + w);
-      indices.push_back(i * w + j);
-      indices.push_back(i * w + j + 1);
-      indices.push_back(i * w + j + w + 1);
-      indices.push_back(i * w + j + w);
-    }
+  init_metaballs();
+  init_indicies();
 
   auto vao = GLuint{};
   glGenVertexArrays(1, &vao);
@@ -192,8 +290,11 @@ int main() try {
   glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vertex),
                vertices.data(), GL_STATIC_DRAW);
   glEnableVertexAttribArray(0);
+  glEnableVertexAttribArray(1);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex),
                         (void *)offsetof(vertex, position));
+  glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(vertex),
+                        (void *)offsetof(vertex, color));
 
   auto ebo = GLuint{};
   glGenBuffers(1, &ebo);
@@ -202,23 +303,7 @@ int main() try {
                indices.size() * sizeof(decltype(indices[0])), indices.data(),
                GL_STATIC_DRAW);
 
-  // camera
-  const auto aspect = (float)height / (float)width;
-  const auto far = 5.f;
-  glm::mat4 projection = glm::ortho(-1.f, 1.f, -1.f, 1.f, -far, far);
-  glm::mat4 p(0.f);
-  p[0][0] = aspect;
-  p[1][1] = 1.f;
-  p[2][2] = -1.f;
-  p[3][3] = 1.f;
-  projection = projection * p;
-  glm::mat4 view(1.f);
-  const auto camera_distance = 500.f;
-  view = glm::translate(view, {-camera_distance, -camera_distance, 0.f});
-  glm::mat4 model(1.f);
-  const auto scale_factor = 0.0015f;
-  model = glm::scale(model, glm::vec3(scale_factor));
-  const auto mvp = model * view * projection;
+  const auto mvp = init_camera();
 
   bool running = true;
   std::unordered_map<SDL_Scancode, bool> key_down;
@@ -246,6 +331,7 @@ int main() try {
 
     if (!running) break;
 
+    glClearColor(0.8f, 0.8f, 1.f, 0.f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(program);
     glUniformMatrix4fv(mvp_location, 1, GL_FALSE,
