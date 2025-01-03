@@ -51,6 +51,7 @@ const char vertex_shader_source[] =
     {
         gl_Position = mvp * vec4(in_position, 0.0 , 1.0);
         color = vec4(1.0, 0.0, 0., 1.);
+//        color = vec4(gl_Position) + 0.5;
     }
 )";
 
@@ -108,7 +109,7 @@ GLuint create_program(GLuint vertex_shader, GLuint fragment_shader)
 
 struct vertex
 {
-  std::array<float, 2> position;
+  glm::vec3 position;
 };
 
 int main()
@@ -167,7 +168,7 @@ try
   const auto h = dimension;
   for (int i = 0; i < h; i++)
     for (int j = 0; j < w; j++)
-      vertices.push_back({float(i), float(j)});
+      vertices.push_back({glm::vec3{i, j, 0}});
 
   for (int i = 0; i < h - 1; ++i)
     for (int j = 0; j < w - 1; ++j)
@@ -190,7 +191,7 @@ try
   glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(vertex),
                vertices.data(), GL_STATIC_DRAW);
   glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(vertex),
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex),
                         (void *)offsetof(vertex, position));
 
   auto ebo = GLuint{};
@@ -202,21 +203,21 @@ try
 
   // camera
   const auto aspect = (float)height / (float)width;
-  const auto far = 100.f;
+  const auto far = 5.f;
   glm::mat4 projection = glm::ortho(-1.f, 1.f, -1.f, 1.f, -far, far);
   glm::mat4 p(0.f);
-  p[0][0] = 1 / aspect;
+  p[0][0] = aspect;
   p[1][1] = 1.f;
   p[2][2] = -1.f;
   p[3][3] = 1.f;
   projection = projection * p;
   glm::mat4 view(1.f);
-  const auto camera_distance = 0.5f;
+  const auto camera_distance = 500.f;
   view = glm::translate(view, {-camera_distance, -camera_distance, 0.f});
   glm::mat4 model(1.f);
-  const auto mvp = projection * view * model;
-  glUniformMatrix4fv(mvp_location, 1, GL_FALSE,
-                     reinterpret_cast<const float *>(&mvp));
+  const auto scale_factor = 0.0015f;
+  model = glm::scale(model, glm::vec3(scale_factor));
+  const auto mvp = model * view * projection;
 
   bool running = true;
   std::unordered_map<SDL_Scancode, bool> key_down;
@@ -251,6 +252,8 @@ try
 
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(program);
+    glUniformMatrix4fv(mvp_location, 1, GL_FALSE,
+                       reinterpret_cast<const float *>(&mvp));
     glBindVertexArray(vao);
     glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, (void *)0);
 
