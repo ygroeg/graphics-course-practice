@@ -7,33 +7,29 @@
 
 #include <GL/glew.h>
 
+#include <array>
+#include <chrono>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/scalar_constants.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
-
-#include <array>
-#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
-std::string to_string(std::string_view str)
-{
+std::string to_string(std::string_view str) {
   return std::string(str.begin(), str.end());
 }
 
-void sdl2_fail(std::string_view message)
-{
+void sdl2_fail(std::string_view message) {
   throw std::runtime_error(to_string(message) + SDL_GetError());
 }
 
-void glew_fail(std::string_view message, GLenum error)
-{
+void glew_fail(std::string_view message, GLenum error) {
   throw std::runtime_error(to_string(message) + reinterpret_cast<const char *>(
                                                     glewGetErrorString(error)));
 }
@@ -68,15 +64,13 @@ const char fragment_shader_source[] =
     }
 )";
 
-GLuint create_shader(GLenum type, const char *source)
-{
+GLuint create_shader(GLenum type, const char *source) {
   GLuint result = glCreateShader(type);
   glShaderSource(result, 1, &source, nullptr);
   glCompileShader(result);
   GLint status;
   glGetShaderiv(result, GL_COMPILE_STATUS, &status);
-  if (status != GL_TRUE)
-  {
+  if (status != GL_TRUE) {
     GLint info_log_length;
     glGetShaderiv(result, GL_INFO_LOG_LENGTH, &info_log_length);
     std::string info_log(info_log_length, '\0');
@@ -86,8 +80,7 @@ GLuint create_shader(GLenum type, const char *source)
   return result;
 }
 
-GLuint create_program(GLuint vertex_shader, GLuint fragment_shader)
-{
+GLuint create_program(GLuint vertex_shader, GLuint fragment_shader) {
   GLuint result = glCreateProgram();
   glAttachShader(result, vertex_shader);
   glAttachShader(result, fragment_shader);
@@ -95,8 +88,7 @@ GLuint create_program(GLuint vertex_shader, GLuint fragment_shader)
 
   GLint status;
   glGetProgramiv(result, GL_LINK_STATUS, &status);
-  if (status != GL_TRUE)
-  {
+  if (status != GL_TRUE) {
     GLint info_log_length;
     glGetProgramiv(result, GL_INFO_LOG_LENGTH, &info_log_length);
     std::string info_log(info_log_length, '\0');
@@ -107,23 +99,35 @@ GLuint create_program(GLuint vertex_shader, GLuint fragment_shader)
   return result;
 }
 
-struct vertex
-{
+struct vertex {
   glm::vec3 position;
+  std::uint8_t color[4];
 };
 
-int main()
-try
-{
-  if (SDL_Init(SDL_INIT_VIDEO) != 0)
-    sdl2_fail("SDL_Init: ");
+struct metaball {
+  glm::vec2 position;
+  glm::vec2 speed;
+  float radius;
+  float weight;
+};
+
+float calc_metaball(const metaball &ball, float x, float y) {
+  float xb = ball.position.x;
+  float yb = ball.position.y;
+  float r = ball.radius;
+  float w = ball.weight;
+
+  return w * exp(-((x - xb) * (x - xb) + (y - yb) * (y - yb)) / (r * r));
+}
+
+int main() try {
+  if (SDL_Init(SDL_INIT_VIDEO) != 0) sdl2_fail("SDL_Init: ");
 
   SDL_Window *window = SDL_CreateWindow(
       "hw 1", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600,
       SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
 
-  if (!window)
-    sdl2_fail("SDL_CreateWindow: ");
+  if (!window) sdl2_fail("SDL_CreateWindow: ");
 
   int width, height;
   SDL_GetWindowSize(window, &width, &height);
@@ -142,8 +146,7 @@ try
   SDL_GLContext gl_context = SDL_GL_CreateContext(window);
   SDL_GL_SetSwapInterval(0);
 
-  if (!gl_context)
-    sdl2_fail("SDL_GL_CreateContext: ");
+  if (!gl_context) sdl2_fail("SDL_GL_CreateContext: ");
 
   if (auto result = glewInit(); result != GLEW_NO_ERROR)
     glew_fail("glewInit: ", result);
@@ -167,12 +170,10 @@ try
   const auto w = dimension;
   const auto h = dimension;
   for (int i = 0; i < h; i++)
-    for (int j = 0; j < w; j++)
-      vertices.push_back({glm::vec3{i, j, 0}});
+    for (int j = 0; j < w; j++) vertices.push_back({glm::vec3{i, j, 0}});
 
   for (int i = 0; i < h - 1; ++i)
-    for (int j = 0; j < w - 1; ++j)
-    {
+    for (int j = 0; j < w - 1; ++j) {
       indices.push_back(i * w + j + 1);
       indices.push_back(i * w + j + w);
       indices.push_back(i * w + j);
@@ -221,34 +222,29 @@ try
 
   bool running = true;
   std::unordered_map<SDL_Scancode, bool> key_down;
-  while (running)
-  {
-    for (SDL_Event event; SDL_PollEvent(&event);)
-      switch (event.type)
-      {
-      case SDL_QUIT:
-        running = false;
-        break;
-      case SDL_WINDOWEVENT:
-        switch (event.window.event)
-        {
-        case SDL_WINDOWEVENT_RESIZED:
-          width = event.window.data1;
-          height = event.window.data2;
-          glViewport(0, 0, width, height);
+  while (running) {
+    for (SDL_Event event; SDL_PollEvent(&event);) switch (event.type) {
+        case SDL_QUIT:
+          running = false;
           break;
-        }
-        break;
-      case SDL_KEYDOWN:
-        key_down[event.key.keysym.scancode] = true;
-        break;
-      case SDL_KEYUP:
-        key_down[event.key.keysym.scancode] = false;
-        break;
+        case SDL_WINDOWEVENT:
+          switch (event.window.event) {
+            case SDL_WINDOWEVENT_RESIZED:
+              width = event.window.data1;
+              height = event.window.data2;
+              glViewport(0, 0, width, height);
+              break;
+          }
+          break;
+        case SDL_KEYDOWN:
+          key_down[event.key.keysym.scancode] = true;
+          break;
+        case SDL_KEYUP:
+          key_down[event.key.keysym.scancode] = false;
+          break;
       }
 
-    if (!running)
-      break;
+    if (!running) break;
 
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(program);
@@ -262,9 +258,7 @@ try
 
   SDL_GL_DeleteContext(gl_context);
   SDL_DestroyWindow(window);
-}
-catch (std::exception const &e)
-{
+} catch (std::exception const &e) {
   std::cerr << e.what() << std::endl;
   return EXIT_FAILURE;
 }
